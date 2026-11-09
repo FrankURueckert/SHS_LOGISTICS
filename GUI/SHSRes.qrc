@@ -1,0 +1,9 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="SHSIcon.png">../SHSIcon.png</file>
+        <file alias="SHS_Logo.png">../SHS_Logo.png</file>
+        <file alias="startseite_img_de.jpg">../startseite_img_de.jpg</file>
+        <file alias="startseite_imag_de.jpg">../startseite_img_de.jpg</file>
+    </qresource>
+</RCC>
+

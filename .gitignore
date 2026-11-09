@@ -1,0 +1,22 @@
+# Build-Verzeichnisse (Qt Creator / CMake / Ninja)
+GUI/build/
+build/
+CMakeLists.txt.user*
+*.autosave
+
+# Standalone-Release (wird per Build_SHS_Logistics_Cpp.bat erzeugt, enthält Qt-DLLs)
+Release_Standalone/
+
+# Installer-Binary (wird als GitHub-Release-Asset veröffentlicht, nicht im Repo)
+setup_SHS_Logistics.exe
+
+# Lokaler Google-Maps-Kachel-Cache
+tile_cache/
+
+# Word-Lock-Dateien, Python-Cache, temporäre Dateien
+~$*
+__pycache__/
+*.pyc
+*.tmp
+*.log
+
