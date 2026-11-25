@@ -23,7 +23,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 # Zentrale Versionsnummer (identisch zu GUI/CMakeLists.txt und Installer/SHS_Logistics.nsi)
-APP_VERSION = "0.9"
+APP_VERSION = "1.0"
 
 
 def set_cell_background(cell, hex_color: str):
@@ -206,13 +206,16 @@ def build_quickstart_manual(repo_root: str):
         p_h.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p_h.add_run().add_picture(hero_jpg, width=Inches(5.8))
 
-    add_styled_heading(doc, "1. Programmstart & Anmeldung bei den 6 Telematik-Diensten", level=1)
+    add_styled_heading(doc, "1. Dual-Mode: Simulationsmodus (Spiel) & Live-GPS-Modus (6 Portale)", level=1)
     doc.add_paragraph(
         "Starten Sie die Anwendung über die Desktop-Verknüpfung bzw. den Startmenü-Eintrag 'SHS Logistics Leitsystem' "
         "(nach der Installation mit 'setup_SHS_Logistics.exe') oder direkt über 'SHS_Logistics.exe'. "
-        "Die Software startet im reinen Multi-Telematik Live-GPS-Betrieb und vereint 6 Portale auf einer gemeinsamen Karte: "
-        "DB Cargo link2rail, Intermodal Telematics (IMT), DOT Telematik, TRANSWAGGON (WOPS), Innofreight OS und Wascosa. "
-        "Klicken Sie oben rechts auf '🔐 Dienste & Logins (0/6)', um sich in den 6 eigenen Login-Reitern anzumelden."
+        "Oben in der Leiste können Sie jederzeit mit einem Klick (oder Strg+1 / Strg+2) verlustfrei zwischen zwei Betriebsmodi wechseln:\n"
+        "• 🎮 SIMULATIONSMODUS (Spiel, Strg+1): Interaktive 2D-Werksbahnsimulation mit fahrenden Zügen, Torpedopfannenwagen (1420 °C), "
+        "Zuglängen-Editor (+ Samms / + Rns-z / + Torpedo / - Waggon), Güter-Objekten, 10 realen Quellen & Senken, Lokomotiv-Pool und Zufalls-Positionierung.\n"
+        "• 📡 LIVE-GPS-MODUS (6 Portale, Strg+2): Reale Live-GPS-Daten aus DB Cargo link2rail, Intermodal Telematics (IMT Teno API), "
+        "DOT Telematik, TRANSWAGGON (WOPS), Innofreight OS und Wascosa (Nexxiot / SAVVY) gemeinsam auf einer Karte — "
+        "inkl. Verbindungstest ('🔍 Test') und '📋 Browser-Session / cURL übernehmen' für Web-SSO/2FA-Portale."
     )
 
     add_styled_heading(doc, "2. Die wichtigsten Bedienelemente & Tastenkürzel auf einen Blick", level=1)
@@ -229,12 +232,13 @@ def build_quickstart_manual(repo_root: str):
             r.font.size = Pt(9.0)
 
     rows = [
-        ("Strg+L", "Button '🔐 Bei link2rail anmelden'", "Öffnet den link2rail Anmelde- & Endpunkt-Dialog (Portal/CIDP, OAuth2, API-Key)"),
-        ("F9", "Button '🔄 Live-Daten abrufen'", "Ruft sofort alle aktuellen GPS- & Waggondaten über die link2rail API ab"),
+        ("Strg+1 / Strg+2", "Modus-Umschalter oben links", "Wechselt verlustfrei zwischen 🎮 Simulationsmodus (Spiel) und 📡 Live-GPS-Modus (6 Portale)"),
+        ("Leertaste (Space)", "Button '⏸ Simulation Pause' (Sim-Modus)", "Startet oder pausiert die laufende 2D-Werksbahnsimulation"),
+        ("F8", "Button '🎲 Zufalls-Pos.' (Sim-Modus)", "Verteilt Züge & gelagerte Waggongruppen zum Testen zufällig auf den Werksgleisen"),
+        ("Strg+L", "Tab '🔐 Dienste & Logins (6)'", "Wechselt in den Live-GPS-Modus und öffnet die 6 eigenen Login-Reiter (inkl. cURL-Import & Test)"),
+        ("F9", "Button '🔄 Alle Dienste abrufen'", "Ruft sofort aktuelle Live-GPS-Daten aller angemeldeten Telematik-Portale ab"),
         ("F1 – F6", "Obere Standort-Leiste", "Zoom auf Völklingen (F1), Dillingen (F2), Burbach (F3), Neunkirchen (F4), Saarland (F5), Deutschland (F6)"),
-        ("F7", "Button '🎯 ALLE LIVE-WAGGONS'", "Passt die Kamera automatisch auf alle per link2rail empfangenen GPS-Positionen an"),
-        ("Tab 1: Live-Waggons", "Suche, Bauart-Filter & Detail-Inspektor", "Filtert empfangene EVN/Waggons und zeigt alle übernommenen link2rail JSON-Felder an"),
-        ("Tab 2: link2rail Login", "Schnellanmeldung, Auto-Sync & Import/Export", "Direktes Ein-/Ausloggen, zyklischer Abruf, JSON/CSV Import & Export sowie HTTP-Protokoll"),
+        ("F7", "Button '🎯 ALLE LIVE-WAGGONS'", "Passt die Kamera automatisch auf alle empfangenen Live-GPS-Positionen an"),
         ("F10 / F11 (Menü Hilfe)", "Menü 'Hilfe' -> PDF-Manuals öffnen", "Öffnet direkt das Technische Handbuch (F10) oder diese Kurzanleitung (F11) als PDF")
     ]
     for row in rows:
@@ -492,69 +496,56 @@ def build_manual():
     )
 
     # =========================================================================
-    # 5. SCHRITT-FÜR-SCHRITT-BEDIENUNGSANLEITUNG FÜR DAS GUI
+    # 5. SCHRITT-FÜR-SCHRITT-BEDIENUNGSANLEITUNG (DUAL-MODE: SIMULATION & LIVE-GPS)
     # =========================================================================
-    add_styled_heading(doc, "5. Schritt-für-Schritt-Bedienungsanleitung (link2rail Live-Betrieb)", level=1)
+    add_styled_heading(doc, "5. Schritt-für-Schritt-Bedienungsanleitung (Simulationsmodus & Live-GPS-Modus)", level=1)
 
-    add_styled_heading(doc, "5.1 Hauptbildschirm, Schnellwahlleiste & Tastenkürzel", level=2)
+    add_styled_heading(doc, "5.1 Modus-Umschaltung (Strg+1 / Strg+2) & Tastenkürzel", level=2)
     doc.add_paragraph(
-        "Das GUI arbeitet im reinen DB Cargo link2rail Live-GPS-Betrieb (ohne simulierte Demo-Züge) und gliedert sich in "
-        "die obere Schnellwahlleiste, den linken Steuerbereich mit vier Tabs und die zentrale 2D-GPS-Karte (Saarland, "
-        "Deutschland und Europa). Die wichtigsten Tastenkürzel lauten:\n"
-        "• Strg+L: Anmelde- & Endpunkt-Dialog für DB Cargo link2rail öffnen\n"
-        "• F9: Alle link2rail GPS- & Waggondaten sofort abrufen\n"
-        "• F1: Zoom auf Saarstahl Werk Völklingen (LD-Stahlwerk, Strangguss, Walzwerk, Saarschmiede)\n"
-        "• F2: Zoom auf Dillinger Hütte & ROGESA (Hochöfen 4 & 5, Grobblechwalzwerk, Hafen Dillingen)\n"
-        "• F3: Zoom auf Saarstahl Werk Burbach (Drahtwerk)\n"
-        "• F4: Zoom auf Saarstahl Werk Neunkirchen (Walzwerk & Edelbaustahl)\n"
-        "• F5: Gesamtübersicht des Saarland-Bahnkorridors\n"
-        "• F6: Deutschland-Übersicht (für Waggons im bundesweiten DB-Cargo-Netz)\n"
-        "• F7: Kamera automatisch auf alle empfangenen link2rail Live-Waggons einpassen\n"
-        "• F10: Öffnet direkt dieses Technische Handbuch als PDF\n"
-        "• F11: Öffnet die Kurzanleitung & Schnellstart als PDF\n"
-        "• Strg+P: Druckdialog für hochauflösenden Ausdruck oder PDF-Export der aktuellen Kartenansicht\n"
-        "• Strg+Q: Anwendung beenden"
+        "Das GUI bietet direkt in der oberen Leiste sowie im Menü 'Modus' einen sofortigen Umschalter zwischen beiden Betriebsarten — "
+        "sowohl der aktuelle Simulationsstand als auch alle empfangenen Live-GPS-Daten bleiben im Hintergrund vollständig erhalten:\n"
+        "• Strg+1 (🎮 SIMULATIONSMODUS): Interaktive 2D-Werksbahnsimulation mit 4 Tabs (🚂 Züge & Waggons, 📦 Güter & Quellen, 🗺️ Karte & Tempo, 🎲 Test & Sim-API).\n"
+        "• Strg+2 (📡 LIVE-GPS-MODUS): Reale GPS-Daten aller 6 Telematik-Dienste mit 4 Tabs (📡 Live-Waggons, 🔐 Dienste & Logins (6), 🏭 Werke & Geofences, 🗺️ Karte & Layer).\n"
+        "• Leertaste (Space): Simulation Start / Pause  |  F8: Zufällige Gleispositionierung (Test-Modus)\n"
+        "• Strg+L: Login-Reiter der 6 Telematik-Portale öffnen  |  F9: Alle angemeldeten Live-Dienste abrufen\n"
+        "• F1–F6: Standort-Zoom (Völklingen, Dillingen, Burbach, Neunkirchen, Saarland, Deutschland)  |  F7: Alle Live-Waggons einpassen\n"
+        "• F10 / F11: Technisches Handbuch bzw. Kurzanleitung als PDF öffnen  |  Strg+P: Kartenansicht drucken/PDF"
     )
 
-    add_styled_heading(doc, "5.2 Tab 1 bedienen: '📡 Live-Waggons'", level=2)
+    add_styled_heading(doc, "5.2 Simulationsmodus (Spiel): Züge, Waggon-Editor, Güter & Lok-Pool", level=2)
     doc.add_paragraph(
-        "1. Live-Tabelle & Filter: Alle über link2rail empfangenen Waggons werden mit UIC/EVN-Nummer, Zug-/Sendungsnummer, "
-        "automatisch erkannter Bauart (Samms, Rns-z, Shimmns/Eaos, Torpedo), Status/Event, Ort/Geofence, GPS-Koordinaten "
-        "und Zeitstempel aufgelistet. Über das Suchfeld und den Bauart-Filter lässt sich der Bestand sofort eingrenzen.\n"
-        "2. Direktes GPS-Zoomen: Ein Klick wählt den Waggon auf der Karte aus; ein Doppelklick (oder Klick auf '🔍 Auf Waggon zoomen') "
-        "zentriert die Karte direkt auf die GPS-Koordinate des Waggons.\n"
-        "3. Vollständiger API-Detail-Inspektor: Die untere Tabelle zeigt sämtliche aus der link2rail JSON-Antwort übernommenen "
-        "Felder (inkl. aller Rohattribute raw.*) an. Über '📋 Waggon-Daten kopieren' wird das JSON direkt in die Zwischenablage kopiert."
+        "1. Tab '🚂 Züge & Waggons': Wählen Sie einen Zug oder eine abgestellte Waggongruppe, wechseln Sie Gleisabschnitt oder Fahrtrichtung, "
+        "kuppeln Sie freie Lokomotiven an/ab und ändern Sie die Zuglänge (1–30 Waggons) per Spinbox oder Direktbuttons (+ Samms, + Rns-z, + 4-Achser, 🔥 + Torpedo, - Waggon ab). "
+        "Jeder einzelne Waggon lässt sich in der Tabelle in Bauart und geladenem Stahlprodukt individuell umkonfigurieren.\n"
+        "2. Tab '📦 Güter & Quellen': Verwalten Sie den Lokomotiv-Pool (Engpass-Simulation: fehlende Loks führen zu abgestellten Waggongruppen 🅿️ KEINE LOK), "
+        "erzeugen Sie neue Güter-Objekte (Stahlknüppel, Grobbleche, Brammen, Drahtcoils, Vorblöcke, Stabstahl, 1420 °C Flüssigroheisen, Schmiedeteile) "
+        "und lösen Sie gezielt ⬆️ Aufnahme (Quelle) oder ⬇️ Abladung (Senke) aus.\n"
+        "3. Tab '🗺️ Karte & Tempo' & '🎲 Test & Sim-API': Steuern Sie Kartenhintergrund, Layer und Simulationsgeschwindigkeit (0.2x–10.0x) "
+        "sowie zufällige Testpositionierung und das simulierte Ril-100/DS100-Telematikprotokoll."
     )
 
-    add_styled_heading(doc, "5.3 Tab 2 bedienen: '🔐 Dienste & Logins (6)' — Eigener Login-Reiter je Dienst", level=2)
+    add_styled_heading(doc, "5.3 Live-GPS-Modus: 6 eigene Login-Reiter, Verbindungstest & Browser-Session/cURL", level=2)
     doc.add_paragraph(
-        "Für jeden der 6 integrierten Telematik-Dienste steht ein eigener, unabhängiger Login-Reiter mit Statusanzeige (🔴/🟢), "
-        "Web-Portal-Direktlink, eigenem Auto-Sync-Intervall, JSON/XML/CSV-Dateiimport und eigenem API-Protokoll zur Verfügung:\n"
-        "1. DB link2rail (https://link2rail.dbcargo.com/ — CIDP Login API V3, Geofence Control, Track & Trace, TrainManagement)\n"
-        "2. Intermodal (IMT) (https://portal.intermodaltelematics.com/ — GPS- & Sensor-Telematik)\n"
-        "3. DOT Telematik (https://portal.dot-telematik.com/login — DOT-Link & DOT Unified REST API)\n"
-        "4. TRANSWAGGON (https://portal.transwaggon.de/csp/wops/index.html?err=1&langID=DE — WOPS JSON/XML/CSV & Freight Buddy)\n"
-        "5. Innofreight OS (https://os.innofreight.com/login — InnoWaggon / InnoTainer GPS-Tracking)\n"
-        "6. Wascosa (https://www.wascosa.com/ — inkl. Vorlagen für SAVVY® Synergy & Nexxiot Connect Cloud)\n"
-        "Alle empfangenen GPS-Positionen sämtlicher angemeldeten Dienste werden automatisch zusammengeführt (bei gleicher EVN "
-        "intelligent angereichert) und gemeinsam auf der SHS-2D-Karte dargestellt. Über den Farbmodus 'Nach Telematik-Dienst färben' "
-        "sowie die 6 Sichtbarkeits-Checkboxen im Tab '🗺️ Karte & Layer' behalten Sie jederzeit den vollen Überblick."
+        "Im Live-GPS-Modus (Strg+2) besitzt jeder der 6 Telematik-Dienste einen eigenen Login-Reiter mit Statusampel (🔴/🟢), "
+        "Verbindungstest ('🔍 Test'), erweitertem Konfigurationsdialog, eigenem Auto-Sync, JSON/XML/CSV-Import und Live-Protokoll:\n"
+        "1. DB Cargo link2rail (DB API Marketplace Login API V3 + Geofence Control / Track & Trace + Browser-Session)\n"
+        "2. Intermodal Telematics – IMT (IMT Teno Protokoll: POST /authorization/v1/authentication mit userId, Passwort & Account-Alias -> x-session-token)\n"
+        "3. DOT Telematik (DOT-Link & DOT Unified REST API, API-Key / Bearer-Token / Browser-Session)\n"
+        "4. TRANSWAGGON (WOPS HTML-Formular-Login an twa.portal.Home.cls + Cookie-Sitzung, HTTP Basic Auth, JSON/XML/CSV)\n"
+        "5. Innofreight OS (os.innofreight.com — JSON-Login, OAuth2 Password Grant oder Browser-Session)\n"
+        "6. Wascosa (Nexxiot Connect Cloud cloud.nexxiot.net, SAVVY® Synergy www.savvy-synergy.com oder Direkt-Token)\n\n"
+        "Besonders praxistauglich bei Portalen mit Web-SSO / 2FA (z. B. Salesforce, Microsoft Entra, Flutter/Angular): "
+        "Über den Button '📋 Browser-Session / cURL übernehmen' melden Sie sich wie gewohnt im Browser an, kopieren im Browser-Netzwerk-Tab (F12) "
+        "die Datenabfrage per 'Als cURL kopieren' (oder Bearer-Token / x-session-token / Cookie) und fügen sie ein — das Tool erkennt URL, Token, "
+        "Cookies und Header vollautomatisch und lädt sofort die echten Live-GPS-Daten auf die gemeinsame Karte."
     )
 
-    add_styled_heading(doc, "5.4 Tab 3 bedienen: '🏭 Werke & Geofences'", level=2)
+    add_styled_heading(doc, "5.4 Vereinigte Live-Tabelle, Werke/Geofences & Dienst-Sichtbarkeit", level=2)
     doc.add_paragraph(
-        "Listet alle 10 realen Standorte von Saarstahl AG und Dillinger Hütte / ROGESA auf und zählt automatisch, wie viele "
-        "echte link2rail Live-Waggons sich anhand ihrer GPS-Koordinaten im jeweiligen Werk/Geofence befinden. Ein Klick auf eine "
-        "Zeile zentriert die Karte direkt auf diese Anlage."
-    )
-
-    add_styled_heading(doc, "5.5 Tab 4 bedienen: '🗺️ Karte & Layer'", level=2)
-    doc.add_paragraph(
-        "Hier wechseln Sie zwischen Hybrid-Karte (Google Maps + vereinfachtes Werk), Schematik/CAD, Straßenkarte und Satellitenbild. "
-        "Alle Layer (Werkhallen, Geofences, Straßen/Flüsse, Gleisnamen, Waggon-Labels) sowie das intelligente GPS-Gleis-Snapping "
-        "(Waggons innerhalb von 120 m zu Werksgleisen werden exakt auf die Gleisachse ausgerichtet; Waggons außerhalb des Saarlands "
-        "erscheinen frei an ihrer exakten GPS-Koordinate in Deutschland/Europa) lassen sich individuell ein- und ausschalten."
+        "Alle über die 6 Dienste empfangenen Waggons erscheinen gemeinsam im Tab '📡 Live-Waggons' (mit Dienst-Filter, Suche, Bauart-Filter "
+        "und vollständigem API-Detail-Inspektor) sowie auf der 2D-Karte. Waggons innerhalb von 120 m zu Werksgleisen werden intelligent auf die "
+        "Gleisachse gesnappt; Waggons in ganz Deutschland/Europa erscheinen an ihrer exakten GPS-Koordinate. Im Tab '🗺️ Karte & Layer' können "
+        "Sie jeden der 6 Dienste einzeln ein- oder ausblenden sowie die Färbung nach Telematik-Dienst oder Waggon-Bauart umschalten."
     )
 
     if os.path.exists(img_api):
@@ -562,7 +553,7 @@ def build_manual():
         p_img_api.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p_img_api.add_run().add_picture(img_api, width=Inches(6.5))
         p_cap_api = doc.add_paragraph(
-            "Abbildung 2: Tab '🔐 link2rail Login & API' mit Schnellanmeldung, konfigurierbaren Endpunkten und Live-Protokoll."
+            "Abbildung 2: Live-GPS-Modus – Tab '🔐 Dienste & Logins (6)' mit allen 6 eigenen Login-Reitern, IMT-Teno-Auth, Verbindungstest und Browser-Session/cURL-Import."
         )
         p_cap_api.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p_cap_api.runs[0].font.size = Pt(9)

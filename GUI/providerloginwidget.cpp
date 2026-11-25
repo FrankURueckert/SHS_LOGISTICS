@@ -41,20 +41,22 @@ ProviderLoginWidget::ProviderLoginWidget(Link2RailClient *client, QWidget *paren
     safeDisplay.replace(QLatin1Char('&'), QStringLiteral("&&"));
     auto *grpLogin = new QGroupBox(QStringLiteral("Anmeldung: %1").arg(safeDisplay), this);
     auto *g = new QGridLayout(grpLogin);
-    g->setVerticalSpacing(5);
+    g->setVerticalSpacing(4);
 
     g->addWidget(new QLabel(QStringLiteral("Auth-Verfahren:")), 0, 0);
     m_comboAuthMode = new QComboBox(grpLogin);
     m_comboAuthMode->addItem(QStringLiteral("Portal-Login / JSON-POST (Benutzer + Passwort)"));
     m_comboAuthMode->addItem(QStringLiteral("OAuth2 Password Grant"));
     m_comboAuthMode->addItem(QStringLiteral("OAuth2 Client Credentials"));
-    m_comboAuthMode->addItem(QStringLiteral("Direkter Bearer-Token / API-Key"));
+    m_comboAuthMode->addItem(QStringLiteral("Direkter Token / Cookie / API-Key (Browser-Session)"));
     m_comboAuthMode->addItem(QStringLiteral("HTTP Basic Auth"));
+    m_comboAuthMode->addItem(QStringLiteral("IMT Teno Login (userId + Account-Alias -> x-session-token)"));
+    m_comboAuthMode->addItem(QStringLiteral("HTML-Formular-Login (z. B. TRANSWAGGON WOPS + Cookie)"));
     g->addWidget(m_comboAuthMode, 0, 1);
 
     g->addWidget(new QLabel(QStringLiteral("Benutzer / E-Mail:")), 1, 0);
     m_editUser = new QLineEdit(grpLogin);
-    m_editUser->setPlaceholderText(QStringLiteral("Benutzername für %1").arg(pi.shortName));
+    m_editUser->setPlaceholderText(QStringLiteral("Benutzername / userId für %1").arg(pi.shortName));
     g->addWidget(m_editUser, 1, 1);
 
     g->addWidget(new QLabel(QStringLiteral("Passwort:")), 2, 0);
@@ -63,34 +65,52 @@ ProviderLoginWidget::ProviderLoginWidget(Link2RailClient *client, QWidget *paren
     m_editPass->setPlaceholderText(QStringLiteral("Passwort für %1").arg(pi.shortName));
     g->addWidget(m_editPass, 2, 1);
 
-    g->addWidget(new QLabel(QStringLiteral("Login-URL (POST):")), 3, 0);
+    m_lblClientId = new QLabel(QStringLiteral("Client-ID / Alias:"), grpLogin);
+    g->addWidget(m_lblClientId, 3, 0);
+    m_editClientId = new QLineEdit(grpLogin);
+    m_editClientId->setPlaceholderText(QStringLiteral("Optional: IMT Account-Alias / DB-Client-Id / OAuth Client-ID"));
+    g->addWidget(m_editClientId, 3, 1);
+
+    g->addWidget(new QLabel(QStringLiteral("Login-URL (POST):")), 4, 0);
     m_editLoginUrl = new QLineEdit(grpLogin);
-    g->addWidget(m_editLoginUrl, 3, 1);
+    g->addWidget(m_editLoginUrl, 4, 1);
 
-    g->addWidget(new QLabel(QStringLiteral("GPS-API-URL (GET):")), 4, 0);
+    g->addWidget(new QLabel(QStringLiteral("GPS-API-URL (GET):")), 5, 0);
     m_editGpsUrl = new QLineEdit(grpLogin);
-    g->addWidget(m_editGpsUrl, 4, 1);
+    g->addWidget(m_editGpsUrl, 5, 1);
 
-    auto *btnRow = new QHBoxLayout();
+    auto *btnRow1 = new QHBoxLayout();
     m_btnLogin = new QPushButton(QStringLiteral("🔐 Anmelden && Laden"), grpLogin);
     m_btnLogin->setStyleSheet(QString("background-color: %1; color: white; padding: 6px;").arg(pi.badgeColor.name()));
     m_btnLogout = new QPushButton(QStringLiteral("🚪 Abmelden"), grpLogin);
     m_btnLogout->setStyleSheet("background-color: #B91C1C; color: white; padding: 6px;");
+    auto *btnProbe = new QPushButton(QStringLiteral("🔍 Test"), grpLogin);
+    btnProbe->setToolTip(QStringLiteral("Prüft Erreichbarkeit, TLS/SSL und ob Endpunkt JSON oder HTML-Webseite liefert"));
+    btnProbe->setStyleSheet("background-color: #0369A1; color: white; padding: 6px;");
+    btnRow1->addWidget(m_btnLogin, 2);
+    btnRow1->addWidget(btnProbe, 1);
+    btnRow1->addWidget(m_btnLogout, 1);
+    g->addLayout(btnRow1, 6, 0, 1, 2);
+
+    auto *btnRow2 = new QHBoxLayout();
+    auto *btnCurl = new QPushButton(QStringLiteral("📋 Browser-Session / cURL übernehmen (SSO / 2FA)"), grpLogin);
+    btnCurl->setToolTip(QStringLiteral("Übernimmt eine aktive Browser-Anmeldung (Als cURL kopieren, Bearer-Token, x-session-token oder Cookie)"));
+    btnCurl->setStyleSheet("background-color: #6D28D9; color: white; padding: 5px 8px;");
     auto *btnAdv = new QPushButton(QStringLiteral("⚙️ Erweitert ..."), grpLogin);
-    btnAdv->setStyleSheet("background-color: #48555F; color: #FBD50E; padding: 6px;");
-    btnRow->addWidget(m_btnLogin);
-    btnRow->addWidget(m_btnLogout);
-    btnRow->addWidget(btnAdv);
-    g->addLayout(btnRow, 5, 0, 1, 2);
+    btnAdv->setStyleSheet("background-color: #48555F; color: #FBD50E; padding: 5px 8px;");
+    btnRow2->addWidget(btnCurl, 2);
+    btnRow2->addWidget(btnAdv, 1);
+    g->addLayout(btnRow2, 7, 0, 1, 2);
+
     root->addWidget(grpLogin);
 
     // 3. Synchronisation, Datei-Import & Rohdaten
     auto *grpSync = new QGroupBox(QStringLiteral("Synchronisation && Datei-Import (%1)").arg(pi.shortName), this);
     auto *gs = new QGridLayout(grpSync);
-    gs->setVerticalSpacing(5);
+    gs->setVerticalSpacing(4);
 
     m_btnFetch = new QPushButton(QStringLiteral("🔄 %1 GPS-Daten jetzt abrufen").arg(pi.shortName), grpSync);
-    m_btnFetch->setStyleSheet("background-color: #0284C7; color: white; padding: 6px;");
+    m_btnFetch->setStyleSheet("background-color: #0284C7; color: white; padding: 5px;");
     gs->addWidget(m_btnFetch, 0, 0, 1, 2);
 
     m_chkAutoPoll = new QCheckBox(QStringLiteral("Auto-Sync alle:"), grpSync);
@@ -119,7 +139,7 @@ ProviderLoginWidget::ProviderLoginWidget(Link2RailClient *client, QWidget *paren
     m_txtLog->setPlainText(
         QStringLiteral("// %1 bereit (TLS/HTTPS: %2).\n"
                        "// Portal: %3\n"
-                       "// Zugangsdaten eingeben und '🔐 Anmelden & Laden' klicken (oder '⚙️ Erweitert ...' für API-Key / OAuth2 / Vorlagen).")
+                       "// Tipp: '🔍 Test' prüft den Endpunkt. Bei Web-SSO/2FA (Salesforce, Entra, Flutter) nutze '📋 Browser-Session / cURL'!")
             .arg(pi.displayName,
                  QSslSocket::supportsSsl() ? QStringLiteral("VERFÜGBAR") : QStringLiteral("NICHT VERFÜGBAR"),
                  pi.portalUrl));
@@ -134,6 +154,8 @@ ProviderLoginWidget::ProviderLoginWidget(Link2RailClient *client, QWidget *paren
     connect(btnPortal,        &QPushButton::clicked, this, &ProviderLoginWidget::onOpenPortalClicked);
     connect(m_btnLogin,       &QPushButton::clicked, this, &ProviderLoginWidget::onLoginClicked);
     connect(m_btnLogout,      &QPushButton::clicked, this, &ProviderLoginWidget::onLogoutClicked);
+    connect(btnProbe,         &QPushButton::clicked, this, &ProviderLoginWidget::onProbeConnectionClicked);
+    connect(btnCurl,          &QPushButton::clicked, this, &ProviderLoginWidget::openCurlImportDialog);
     connect(btnAdv,           &QPushButton::clicked, this, &ProviderLoginWidget::openAdvancedDialog);
     connect(m_btnFetch,       &QPushButton::clicked, this, &ProviderLoginWidget::onFetchClicked);
     connect(m_comboAuthMode,  QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ProviderLoginWidget::onAuthModeChanged);
@@ -158,6 +180,7 @@ ProviderLoginWidget::ProviderLoginWidget(Link2RailClient *client, QWidget *paren
             m_pollTimer->setInterval(std::max(10, m_client->config().pollIntervalSeconds) * 1000);
             m_pollTimer->start();
         }
+        syncUiFromConfig();
         refreshStatusCard();
         emit statusNotification(details);
     });
@@ -167,8 +190,9 @@ ProviderLoginWidget::ProviderLoginWidget(Link2RailClient *client, QWidget *paren
         QMessageBox::warning(
             this,
             QStringLiteral("%1 – Anmeldung fehlgeschlagen").arg(m_client->info().shortName),
-            err + QStringLiteral("\n\nTipp: Über '⚙️ Erweitert ...' lassen sich Vorlagen, Auth-Verfahren (JSON, OAuth2, Basic Auth, API-Key), "
-                                 "Login-/API-Endpunkte und Zusatz-Header exakt an deinen Account anpassen."));
+            err + QStringLiteral("\n\nLösungstipp:\n"
+                                 "• Klicke '📋 Browser-Session / cURL übernehmen', um dich im Browser (inkl. SSO/2FA) anzumelden und Token/Cookie/URL direkt zu übernehmen.\n"
+                                 "• Oder passe über '⚙️ Erweitert ...' Vorlage, Account-Alias, API-Key oder Endpunkte an."));
     });
     connect(m_client, &Link2RailClient::liveDataUpdated, this, [this](const QVector<Link2RailWagonRecord> &, const QString &summary) {
         refreshStatusCard();
@@ -177,18 +201,35 @@ ProviderLoginWidget::ProviderLoginWidget(Link2RailClient *client, QWidget *paren
     connect(m_client, &Link2RailClient::apiError, this, [this](const QString &err) {
         emit statusNotification(err);
     });
+    connect(m_client, &Link2RailClient::connectionTestFinished, this, [this](bool, const QString &report) {
+        emit statusNotification(report.section('\n', 0, 0));
+    });
 
     syncUiFromConfig();
     refreshStatusCard();
+}
+
+Link2RailConfig ProviderLoginWidget::buildConfigFromFields() const
+{
+    Link2RailConfig cfg = m_client->config();
+    cfg.authMode = static_cast<Link2RailAuthMode>(m_comboAuthMode->currentIndex());
+    cfg.username = m_editUser->text().trimmed();
+    cfg.password = m_editPass->text();
+    cfg.clientId = m_editClientId->text().trimmed();
+    cfg.loginUrl = m_editLoginUrl->text().trimmed();
+    cfg.gpsTelemetryUrl = m_editGpsUrl->text().trimmed();
+    cfg.pollIntervalSeconds = m_spinPollSec->value();
+    return cfg;
 }
 
 void ProviderLoginWidget::syncUiFromConfig()
 {
     m_updatingUi = true;
     const Link2RailConfig &cfg = m_client->config();
-    m_comboAuthMode->setCurrentIndex(static_cast<int>(cfg.authMode));
+    m_comboAuthMode->setCurrentIndex(std::clamp(static_cast<int>(cfg.authMode), 0, m_comboAuthMode->count() - 1));
     m_editUser->setText(cfg.username);
     m_editPass->setText(cfg.password);
+    m_editClientId->setText(cfg.clientId);
     m_editLoginUrl->setText(cfg.loginUrl);
     m_editGpsUrl->setText(cfg.gpsTelemetryUrl);
     m_spinPollSec->setValue(std::clamp(cfg.pollIntervalSeconds, 10, 3600));
@@ -233,30 +274,44 @@ void ProviderLoginWidget::onAuthModeChanged(int index)
     const auto mode = static_cast<Link2RailAuthMode>(index);
     const bool needUserPass = (mode == Link2RailAuthMode::PortalLoginCidP ||
                                mode == Link2RailAuthMode::OAuth2PasswordGrant ||
-                               mode == Link2RailAuthMode::HttpBasicAuth);
+                               mode == Link2RailAuthMode::HttpBasicAuth ||
+                               mode == Link2RailAuthMode::ImtTenoAuth ||
+                               mode == Link2RailAuthMode::HtmlFormPost);
     const bool needLoginUrl = (mode != Link2RailAuthMode::DirectApiKeyOrToken &&
                                mode != Link2RailAuthMode::HttpBasicAuth);
     m_editUser->setEnabled(needUserPass || mode == Link2RailAuthMode::DirectApiKeyOrToken);
     m_editPass->setEnabled(needUserPass);
     m_editLoginUrl->setEnabled(needLoginUrl);
+
+    if (mode == Link2RailAuthMode::ImtTenoAuth) {
+        m_lblClientId->setText(QStringLiteral("IMT Account-Alias:"));
+        m_editClientId->setPlaceholderText(QStringLiteral("Firmen-Alias aus IMT Portal (z. B. shs-logistics)"));
+    } else if (mode == Link2RailAuthMode::HtmlFormPost) {
+        m_lblClientId->setText(QStringLiteral("Zusatz-ID (opt.):"));
+        m_editClientId->setPlaceholderText(QStringLiteral("Optional (für WOPS meist leer lassen)"));
+    } else {
+        m_lblClientId->setText(QStringLiteral("Client-ID / Alias:"));
+        m_editClientId->setPlaceholderText(QStringLiteral("Optional: DB-Client-Id, OAuth Client-ID oder IMT Alias"));
+    }
 }
 
 void ProviderLoginWidget::onLoginClicked()
 {
-    Link2RailConfig cfg = m_client->config();
-    cfg.authMode = static_cast<Link2RailAuthMode>(m_comboAuthMode->currentIndex());
-    cfg.username = m_editUser->text().trimmed();
-    cfg.password = m_editPass->text();
-    cfg.loginUrl = m_editLoginUrl->text().trimmed();
-    cfg.gpsTelemetryUrl = m_editGpsUrl->text().trimmed();
-    cfg.pollIntervalSeconds = m_spinPollSec->value();
-
+    const Link2RailConfig cfg = buildConfigFromFields();
     if (cfg.authMode == Link2RailAuthMode::DirectApiKeyOrToken &&
-        cfg.manualBearerToken.trimmed().isEmpty() && cfg.apiKey.trimmed().isEmpty()) {
-        openAdvancedDialog();
+        cfg.manualBearerToken.trimmed().isEmpty() &&
+        cfg.apiKey.trimmed().isEmpty() &&
+        cfg.manualCookieHeader.trimmed().isEmpty() &&
+        cfg.extraHeadersRaw.trimmed().isEmpty()) {
+        openCurlImportDialog();
         return;
     }
     m_client->login(cfg);
+}
+
+void ProviderLoginWidget::onProbeConnectionClicked()
+{
+    m_client->probeConnection(buildConfigFromFields());
 }
 
 void ProviderLoginWidget::onLogoutClicked()
@@ -278,16 +333,66 @@ void ProviderLoginWidget::onFetchClicked()
     m_client->fetchAllLiveData();
 }
 
+void ProviderLoginWidget::openCurlImportDialog()
+{
+    const TelematicsProviderInfo pi = m_client->info();
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Browser-Session / cURL übernehmen – %1").arg(pi.displayName));
+    dlg.resize(650, 410);
+    auto *lay = new QVBoxLayout(&dlg);
+
+    auto *lblInfo = new QLabel(
+        QStringLiteral("<b style='font-size:12px; color:#1E293B;'>Schnell-Anmeldung per Browser-Session für %1</b><br>"
+                       "<span style='font-size:10.5px; color:#334155;'>"
+                       "Ideal für Portale mit Single Sign-On (SSO), 2FA, Salesforce, Microsoft Entra, Flutter oder Angular:<br>"
+                       "<b>Schritt 1:</b> Klicke auf <i>„🌐 Portal öffnen“</i> und melde dich im Browser normal an.<br>"
+                       "<b>Schritt 2:</b> Drücke im Browser <b>F12</b> → Reiter <b>Netzwerk (Network)</b> → Filter <i>Fetch/XHR</i> → "
+                       "Rechtsklick auf die Waggon-/GPS-Abfrage → <b>„Als cURL kopieren“</b>.<br>"
+                       "<b>Schritt 3:</b> Füge den cURL-Befehl (oder direkt <code>Bearer ...</code> / <code>x-session-token: ...</code> / <code>Cookie: ...</code>) unten ein:</span>")
+            .arg(pi.displayName.toHtmlEscaped()),
+        &dlg);
+    lblInfo->setWordWrap(true);
+    lay->addWidget(lblInfo);
+
+    auto *ed = new QPlainTextEdit(&dlg);
+    ed->setStyleSheet("background-color:#0F172A; color:#E2E8F0; font-family:Consolas,monospace; font-size:10px;");
+    ed->setPlaceholderText(
+        QStringLiteral("Beispiel:\ncurl 'https://.../wagons' \\\n  -H 'Authorization: Bearer eyJ...' \\\n  -H 'Cookie: ...'\n\n"
+                       "Oder einfach direkt ein Token / x-session-token / Cookie-String einfügen."));
+    lay->addWidget(ed, 1);
+
+    auto *btnRow = new QHBoxLayout();
+    auto *btnPortal = new QPushButton(QStringLiteral("🌐 %1 Portal im Browser öffnen").arg(pi.shortName), &dlg);
+    btnPortal->setStyleSheet(QString("background-color: %1; color: white; padding: 6px 10px;").arg(pi.badgeColor.name()));
+    connect(btnPortal, &QPushButton::clicked, this, &ProviderLoginWidget::onOpenPortalClicked);
+
+    auto *btnCancel = new QPushButton(QStringLiteral("Abbrechen"), &dlg);
+    auto *btnApply = new QPushButton(QStringLiteral("✅ Sitzung übernehmen && Live-Daten laden"), &dlg);
+    btnApply->setStyleSheet("background-color: #15803D; color: white; padding: 6px 14px; font-weight: bold;");
+    connect(btnCancel, &QPushButton::clicked, &dlg, &QDialog::reject);
+    connect(btnApply, &QPushButton::clicked, &dlg, &QDialog::accept);
+
+    btnRow->addWidget(btnPortal);
+    btnRow->addStretch(1);
+    btnRow->addWidget(btnCancel);
+    btnRow->addWidget(btnApply);
+    lay->addLayout(btnRow);
+
+    if (dlg.exec() == QDialog::Accepted) {
+        QString summary;
+        if (m_client->applyFromCurlOrToken(ed->toPlainText(), &summary)) {
+            syncUiFromConfig();
+            refreshStatusCard();
+            emit statusNotification(QStringLiteral("[%1] %2").arg(pi.shortName, summary));
+        } else {
+            QMessageBox::warning(this, QStringLiteral("Übernahme fehlgeschlagen"), summary);
+        }
+    }
+}
+
 void ProviderLoginWidget::openAdvancedDialog()
 {
-    Link2RailConfig cfg = m_client->config();
-    cfg.authMode = static_cast<Link2RailAuthMode>(m_comboAuthMode->currentIndex());
-    if (!m_editUser->text().trimmed().isEmpty()) cfg.username = m_editUser->text().trimmed();
-    if (!m_editPass->text().isEmpty()) cfg.password = m_editPass->text();
-    if (!m_editLoginUrl->text().trimmed().isEmpty()) cfg.loginUrl = m_editLoginUrl->text().trimmed();
-    if (!m_editGpsUrl->text().trimmed().isEmpty()) cfg.gpsTelemetryUrl = m_editGpsUrl->text().trimmed();
-    cfg.pollIntervalSeconds = m_spinPollSec->value();
-
+    const Link2RailConfig cfg = buildConfigFromFields();
     Link2RailLoginDialog dlg(cfg, this);
     if (dlg.exec() == QDialog::Accepted) {
         const Link2RailConfig newCfg = dlg.resultConfig();
@@ -369,4 +474,3 @@ void ProviderLoginWidget::onOpenPortalClicked()
 {
     QDesktopServices::openUrl(QUrl(m_client->info().portalUrl));
 }
-

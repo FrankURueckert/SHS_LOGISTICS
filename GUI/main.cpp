@@ -44,7 +44,7 @@ int main(int argc, char *argv[])
         sleepWithEventProcessing(a, 650);
 
         splash.setPixmap(MainWindowSHSLogistics::createCorporateSplashPixmap(
-            100, QStringLiteral("Alle 6 Telematik-Dienste bereit (link2rail · IMT · DOT · TRANSWAGGON · Innofreight · Wascosa)")));
+            100, QStringLiteral("Dual-Mode bereit: Simulationsmodus (Spiel) & 6 Live-GPS-Portale!")));
         sleepWithEventProcessing(a, 550);
     }
 

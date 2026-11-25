@@ -22,6 +22,7 @@ public:
 
     Link2RailClient* client() const { return m_client; }
     void openAdvancedDialog();
+    void openCurlImportDialog();
     void syncUiFromConfig();
     void refreshStatusCard();
 
@@ -33,6 +34,7 @@ private slots:
     void onLoginClicked();
     void onLogoutClicked();
     void onFetchClicked();
+    void onProbeConnectionClicked();
     void onAuthModeChanged(int index);
     void onAutoPollToggled(bool checked);
     void onPollIntervalChanged(int seconds);
@@ -41,13 +43,17 @@ private slots:
     void onOpenPortalClicked();
 
 private:
+    Link2RailConfig buildConfigFromFields() const;
+
     Link2RailClient *m_client = nullptr;
     QTimer *m_pollTimer = nullptr;
 
     QLabel *m_lblStatusCard = nullptr;
     QComboBox *m_comboAuthMode = nullptr;
+    QLabel *m_lblClientId = nullptr;
     QLineEdit *m_editUser = nullptr;
     QLineEdit *m_editPass = nullptr;
+    QLineEdit *m_editClientId = nullptr;
     QLineEdit *m_editLoginUrl = nullptr;
     QLineEdit *m_editGpsUrl = nullptr;
 
@@ -62,4 +68,3 @@ private:
 };
 
 #endif // PROVIDERLOGINWIDGET_H
-

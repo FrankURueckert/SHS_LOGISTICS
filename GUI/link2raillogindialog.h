@@ -26,6 +26,7 @@ private slots:
     void onPresetChanged(int index);
     void onAuthModeChanged(int index);
     void onOpenPortalInBrowser();
+    void onPasteCurlClicked();
 
 private:
     void applyConfigToUi(const Link2RailConfig &cfg);
@@ -35,12 +36,15 @@ private:
     QComboBox *m_comboPreset = nullptr;
     QComboBox *m_comboAuthMode = nullptr;
 
+    QLabel *m_lblClientId = nullptr;
     QLineEdit *m_editUsername = nullptr;
     QLineEdit *m_editPassword = nullptr;
     QLineEdit *m_editClientId = nullptr;
     QLineEdit *m_editClientSecret = nullptr;
     QLineEdit *m_editApiKey = nullptr;
     QLineEdit *m_editBearerToken = nullptr;
+    QLineEdit *m_editCookieHeader = nullptr;
+    QLineEdit *m_editSessionTokenHeader = nullptr;
 
     QCheckBox *m_chkRememberSettings = nullptr;
     QCheckBox *m_chkRememberPassword = nullptr;

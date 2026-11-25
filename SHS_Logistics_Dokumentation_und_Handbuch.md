@@ -1,7 +1,7 @@
 # SHS Logistics GmbH – Technisches Handbuch & GUI-Bedienungsanleitung
 
-**Projekt:** `SHS_LOGISTICS` – Interaktives 2D-Werksbahn-, Waggon- & Multi-Telematik Live-GPS-Leitsystem (6 Portale: DB link2rail, Intermodal Telematics, DOT Telematik, TRANSWAGGON, Innofreight OS, Wascosa)  
-**Software-Version:** **0.9 (Multi-Telematik Live-GPS Edition)**  
+**Projekt:** `SHS_LOGISTICS` – Dual-Mode 2D-Werksbahn-Simulation & Multi-Telematik Live-GPS-Leitsystem (Simulationsmodus + 6 Portale: DB link2rail, Intermodal Telematics, DOT Telematik, TRANSWAGGON, Innofreight OS, Wascosa)  
+**Software-Version:** **1.0 (Dual-Mode: Simulationsmodus + 6 Live-GPS-Portale)**  
 **Wissenschaftliche Leitung & Software-Entwicklung:** **Frank U. Rückert** ([`frank.rueckert@htwsaar.de`](mailto:frank.rueckert@htwsaar.de))  
 **Entwicklerin:** **Sevda Dawd** ([`sevdasdawd@gmail.com`](mailto:sevdasdawd@gmail.com))  
 **Institution:** htw saar – Hochschule für Technik und Wirtschaft des Saarlandes (Fakultät für Ingenieurwissenschaften)  

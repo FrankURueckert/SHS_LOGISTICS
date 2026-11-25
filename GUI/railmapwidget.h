@@ -17,6 +17,11 @@
 
 #include "link2railclient.h"
 
+enum class AppOperatingMode {
+    Simulation = 0, // Interaktiver Spiel- & Simulationsmodus (Züge, Quellen/Senken, Lok-Pool, Waggon-Editor)
+    LiveGps = 1     // Reale Live-GPS-Daten aus allen 6 Telematik-Portalen
+};
+
 enum class WagonCategory {
     Samms_6Axle = 0,    // Samms 489/709 (6-Achser Schwerlast-Flachwagen)
     Rnsz_4Axle = 1,     // Rns-z 655 (4-Achser Drehgestell-Rungenwagen)
@@ -239,6 +244,12 @@ public:
     void setShowSourcesAndSinks(bool show);
     void setExaggerateWagonSize(bool exaggerate);
 
+    // Betriebsmodus: Simulationsmodus (Spiel) <-> Reale Live-GPS-Daten (6 Portale)
+    void setOperatingMode(AppOperatingMode mode);
+    AppOperatingMode operatingMode() const { return m_operatingMode; }
+    bool isSimulationMode() const { return m_operatingMode == AppOperatingMode::Simulation; }
+    bool isLiveGpsMode() const { return m_operatingMode == AppOperatingMode::LiveGps; }
+
     // Simulation Steuerung
     void setSimulationRunning(bool running);
     bool isSimulationRunning() const { return m_simRunning; }
@@ -249,9 +260,11 @@ public:
     // Zug-, Waggon-, Quellen/Senken- & Güter-Zugriff
     const QVector<TrainConsist>& trains() const { return m_trains; }
     QVector<TrainConsist>& trainsMutable() { return m_trains; }
+    const QVector<TrainConsist>& simTrains() const { return isSimulationMode() ? m_trains : m_simTrainsBackup; }
+    const QVector<TrainConsist>& liveTrains() const { return isLiveGpsMode() ? m_trains : m_liveTrainsBackup; }
     const QVector<RailTrack>& tracks() const { return m_tracks; }
     const QVector<SourceSinkNode>& sourceSinkNodes() const { return m_sourceSinkNodes; }
-    const QVector<CargoOrder>& cargoOrders() const { return m_cargoOrders; }
+    const QVector<CargoOrder>& cargoOrders() const { return isSimulationMode() ? m_cargoOrders : m_simCargoOrdersBackup; }
 
     // Lokomotiv-Pool & Engpass-Steuerung
     int totalLocomotivesInPool() const { return m_totalLocosInPool; }
@@ -325,6 +338,7 @@ public:
     static QString defaultSinkForProduct(CargoProductType prod);
 
 signals:
+    void operatingModeChanged(AppOperatingMode mode);
     void selectionChanged(int trainIndex, int wagonIndex);
     void trainsUpdated();
     void cargoAndNodesUpdated();
@@ -410,9 +424,21 @@ private:
     bool m_showSourcesAndSinks = true;
     bool m_exaggerateWagonSize = true;
 
-    // Simulation (im reinen link2rail Live-Betrieb standardmäßig deaktiviert)
+    // Betriebsmodus & getrennte Datenhaltung (Wechsel zwischen Simulation & Live-GPS ohne Datenverlust)
+    AppOperatingMode m_operatingMode = AppOperatingMode::Simulation;
+    QVector<TrainConsist> m_simTrainsBackup;
+    QVector<CargoOrder> m_simCargoOrdersBackup;
+    int m_simSelectedTrainIdxBackup = 0;
+    int m_simSelectedWagonIdxBackup = -1;
+    bool m_simWasRunningBackup = true;
+
+    QVector<TrainConsist> m_liveTrainsBackup;
+    int m_liveSelectedTrainIdxBackup = -1;
+    int m_liveSelectedWagonIdxBackup = -1;
+
+    // Simulation
     QTimer *m_simTimer = nullptr;
-    bool m_simRunning = false;
+    bool m_simRunning = true;
     double m_simSpeedFactor = 2.5;
 
     // Multi-Provider Live-Status & GPS-Optionen

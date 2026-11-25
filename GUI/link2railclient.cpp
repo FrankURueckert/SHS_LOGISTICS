@@ -503,40 +503,40 @@ QStringList Link2RailClient::presetNamesForProvider(TelematicsProviderId id)
     switch (id) {
     case TelematicsProviderId::Link2Rail:
         return {
-            QStringLiteral("DB Cargo link2rail – Portal-Login / CIDP (Standard)"),
             QStringLiteral("DB API Marketplace – Login API V3 (Produktion)"),
             QStringLiteral("DB API Marketplace – Login API V3 (DEMO / Test)"),
+            QStringLiteral("link2rail Webportal – Browser-Session / Bearer-Token / Cookie"),
             QStringLiteral("OAuth2 / OIDC Token-Endpunkt (Benutzerdefiniert)")
         };
     case TelematicsProviderId::IntermodalTelematics:
         return {
-            QStringLiteral("IMT Portal – Benutzername & Passwort (portal.intermodaltelematics.com)"),
-            QStringLiteral("IMT REST API – Direkter API-Key / Bearer-Token"),
-            QStringLiteral("IMT OAuth2 Token-Endpunkt (Client-ID / Secret)")
+            QStringLiteral("IMT Teno Portal-Login (userId + Passwort + Account-Alias -> x-session-token)"),
+            QStringLiteral("IMT Browser-Session / x-session-token (Microsoft SSO / Entra)"),
+            QStringLiteral("IMT REST API – OAuth2 Token-Endpunkt (Client-ID / Secret)")
         };
     case TelematicsProviderId::DotTelematik:
         return {
-            QStringLiteral("DOT-Link Portal – Benutzername & Passwort (portal.dot-telematik.com)"),
-            QStringLiteral("DOT Unified API – Direkter API-Key / Bearer-Token"),
+            QStringLiteral("DOT Unified API – Direkter API-Key / Bearer-Token / Browser-Session"),
+            QStringLiteral("DOT-Link Portal – JSON Login-POST (Benutzer + Passwort)"),
             QStringLiteral("DOT Unified API – HTTP Basic Auth")
         };
     case TelematicsProviderId::Transwaggon:
         return {
-            QStringLiteral("TRANSWAGGON WOPS – Portal-Login (portal.transwaggon.de)"),
-            QStringLiteral("TRANSWAGGON WOPS / Freight Buddy – HTTP Basic Auth (JSON/XML)"),
-            QStringLiteral("TRANSWAGGON API – Direkter Bearer-Token / API-Key")
+            QStringLiteral("TRANSWAGGON WOPS – Formular-Login (twa.portal.Home.cls + Cookie)"),
+            QStringLiteral("TRANSWAGGON CIS / Freight Buddy – HTTP Basic Auth (JSON/XML)"),
+            QStringLiteral("TRANSWAGGON Browser-Session / Cookie / API-Key")
         };
     case TelematicsProviderId::Innofreight:
         return {
-            QStringLiteral("Innofreight OS – Portal-Login (os.innofreight.com)"),
+            QStringLiteral("Innofreight OS – Portal-Login (JSON-POST)"),
             QStringLiteral("Innofreight OS – OAuth2 Password Grant"),
-            QStringLiteral("Innofreight OS – Direkter Bearer-Token / API-Key")
+            QStringLiteral("Innofreight OS – Browser-Session / Bearer-Token / Cookie")
         };
     case TelematicsProviderId::Wascosa:
         return {
-            QStringLiteral("Wascosa / SAVVY® Synergy Portal – Login (Benutzername + Passwort)"),
             QStringLiteral("Wascosa / Nexxiot Connect Cloud – API Login (cloud.nexxiot.net)"),
-            QStringLiteral("Wascosa Digital API – Direkter Bearer-Token / API-Key")
+            QStringLiteral("Wascosa / SAVVY® Synergy – Portal Login (www.savvy-synergy.com)"),
+            QStringLiteral("Wascosa Digital – Browser-Session / Bearer-Token / API-Key")
         };
     }
     return {QStringLiteral("Standard")};
@@ -553,82 +553,93 @@ Link2RailConfig Link2RailClient::presetConfig(TelematicsProviderId id, int prese
     case TelematicsProviderId::Link2Rail:
         if (presetIndex == 1) {
             cfg.authMode = Link2RailAuthMode::PortalLoginCidP;
+            cfg.loginUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/login-demo/v3/api/v1/authenticate");
+            cfg.gpsTelemetryUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/geofence-control-demo/v1/wagons");
+            cfg.trackTraceUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/track-and-trace/v1/wagons");
+        } else if (presetIndex == 2) {
+            cfg.authMode = Link2RailAuthMode::DirectApiKeyOrToken;
+            cfg.loginUrl = QStringLiteral("https://link2rail.dbcargo.com/");
+            cfg.gpsTelemetryUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/geofence-control/v1/wagons");
+            cfg.trackTraceUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/track-and-trace/v1/wagons");
+            cfg.trainMgmtUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/train-management/v1/trains");
+        } else if (presetIndex == 3) {
+            cfg.authMode = Link2RailAuthMode::OAuth2PasswordGrant;
+            cfg.loginUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/oauth2/token");
+            cfg.gpsTelemetryUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/geofence-control/v1/wagons");
+            cfg.trackTraceUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/track-and-trace/v1/wagons");
+        } else {
+            cfg.authMode = Link2RailAuthMode::PortalLoginCidP;
             cfg.loginUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/login/v3/api/v1/authenticate");
             cfg.gpsTelemetryUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/geofence-control/v1/wagons");
             cfg.trackTraceUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/track-and-trace/v1/wagons");
             cfg.trainMgmtUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/train-management/v1/trains");
             cfg.enableTrackTraceEndpoint = true;
-        } else if (presetIndex == 2) {
-            cfg.authMode = Link2RailAuthMode::PortalLoginCidP;
-            cfg.loginUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/login-demo/v3/api/v1/authenticate");
-            cfg.gpsTelemetryUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/geofence-control-demo/v1/wagons");
-            cfg.trackTraceUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/track-and-trace/v1/wagons");
-        } else if (presetIndex == 3) {
-            cfg.authMode = Link2RailAuthMode::OAuth2PasswordGrant;
-            cfg.loginUrl = QStringLiteral("https://link2rail.dbcargo.com/oauth2/token");
-            cfg.gpsTelemetryUrl = QStringLiteral("https://link2rail.dbcargo.com/api/geofence-control/v1/wagons");
-            cfg.trackTraceUrl = QStringLiteral("https://link2rail.dbcargo.com/api/track-and-trace/v1/wagons");
-        } else {
-            cfg.authMode = Link2RailAuthMode::PortalLoginCidP;
-            cfg.loginUrl = QStringLiteral("https://link2rail.dbcargo.com/api/v1/authenticate");
-            cfg.gpsTelemetryUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/geofence-control/v1/wagons");
-            cfg.trackTraceUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/track-and-trace/v1/wagons");
-            cfg.trainMgmtUrl = QStringLiteral("https://apis.deutschebahn.com/db-cargo/link2rail/train-management/v1/trains");
         }
         break;
 
     case TelematicsProviderId::IntermodalTelematics:
-        cfg.loginUrl = QStringLiteral("https://portal.intermodaltelematics.com/api/auth/login");
-        cfg.gpsTelemetryUrl = QStringLiteral("https://portal.intermodaltelematics.com/api/v1/assets/positions");
-        cfg.trackTraceUrl = QStringLiteral("https://portal.intermodaltelematics.com/api/v1/assets");
+        cfg.loginUrl = QStringLiteral("https://portal.intermodaltelematics.com/authorization/v1/authentication");
+        cfg.gpsTelemetryUrl = QStringLiteral("https://portal.intermodaltelematics.com/user/v1/assets");
+        cfg.trackTraceUrl = QStringLiteral("https://portal.intermodaltelematics.com/common/v1/tokenstatus");
+        cfg.sessionTokenHeaderName = QStringLiteral("x-session-token");
         if (presetIndex == 1) cfg.authMode = Link2RailAuthMode::DirectApiKeyOrToken;
         else if (presetIndex == 2) cfg.authMode = Link2RailAuthMode::OAuth2PasswordGrant;
-        else cfg.authMode = Link2RailAuthMode::PortalLoginCidP;
+        else cfg.authMode = Link2RailAuthMode::ImtTenoAuth;
         break;
 
     case TelematicsProviderId::DotTelematik:
         cfg.loginUrl = QStringLiteral("https://portal.dot-telematik.com/api/auth/login");
-        cfg.gpsTelemetryUrl = QStringLiteral("https://portal.dot-telematik.com/api/v1/assets/positions");
-        cfg.trackTraceUrl = QStringLiteral("https://portal.dot-telematik.com/api/v1/geofences/assets");
-        if (presetIndex == 1) cfg.authMode = Link2RailAuthMode::DirectApiKeyOrToken;
-        else if (presetIndex == 2) cfg.authMode = Link2RailAuthMode::HttpBasicAuth;
-        else cfg.authMode = Link2RailAuthMode::PortalLoginCidP;
+        cfg.gpsTelemetryUrl = QStringLiteral("https://api.dot-telematik.com/v1/assets/positions");
+        cfg.trackTraceUrl = QStringLiteral("https://api.dot-telematik.com/v1/geofences/assets");
+        if (presetIndex == 1) {
+            cfg.authMode = Link2RailAuthMode::PortalLoginCidP;
+            cfg.gpsTelemetryUrl = QStringLiteral("https://portal.dot-telematik.com/api/v1/assets/positions");
+        } else if (presetIndex == 2) {
+            cfg.authMode = Link2RailAuthMode::HttpBasicAuth;
+        } else {
+            cfg.authMode = Link2RailAuthMode::DirectApiKeyOrToken;
+        }
         break;
 
     case TelematicsProviderId::Transwaggon:
-        cfg.loginUrl = QStringLiteral("https://portal.transwaggon.de/csp/wops/api/login");
+        cfg.loginUrl = QStringLiteral("https://portal.transwaggon.de/csp/wops/twa.portal.Home.cls");
         cfg.gpsTelemetryUrl = QStringLiteral("https://portal.transwaggon.de/csp/wops/api/wagons/positions");
         cfg.trackTraceUrl = QStringLiteral("https://portal.transwaggon.de/csp/wops/api/wagons/tracking");
         if (presetIndex == 1) cfg.authMode = Link2RailAuthMode::HttpBasicAuth;
         else if (presetIndex == 2) cfg.authMode = Link2RailAuthMode::DirectApiKeyOrToken;
-        else cfg.authMode = Link2RailAuthMode::PortalLoginCidP;
+        else cfg.authMode = Link2RailAuthMode::HtmlFormPost;
         break;
 
     case TelematicsProviderId::Innofreight:
         cfg.loginUrl = QStringLiteral("https://os.innofreight.com/api/auth/login");
         cfg.gpsTelemetryUrl = QStringLiteral("https://os.innofreight.com/api/v1/wagons/positions");
         cfg.trackTraceUrl = QStringLiteral("https://os.innofreight.com/api/v1/shipments");
-        if (presetIndex == 1) cfg.authMode = Link2RailAuthMode::OAuth2PasswordGrant;
-        else if (presetIndex == 2) cfg.authMode = Link2RailAuthMode::DirectApiKeyOrToken;
-        else cfg.authMode = Link2RailAuthMode::PortalLoginCidP;
+        if (presetIndex == 1) {
+            cfg.authMode = Link2RailAuthMode::OAuth2PasswordGrant;
+            cfg.loginUrl = QStringLiteral("https://os.innofreight.com/oauth/token");
+        } else if (presetIndex == 2) {
+            cfg.authMode = Link2RailAuthMode::DirectApiKeyOrToken;
+        } else {
+            cfg.authMode = Link2RailAuthMode::PortalLoginCidP;
+        }
         break;
 
     case TelematicsProviderId::Wascosa:
         if (presetIndex == 1) {
+            cfg.authMode = Link2RailAuthMode::PortalLoginCidP;
+            cfg.loginUrl = QStringLiteral("https://www.savvy-synergy.com/api/auth/login");
+            cfg.gpsTelemetryUrl = QStringLiteral("https://www.savvy-synergy.com/api/v1/assets/positions");
+            cfg.trackTraceUrl = QStringLiteral("https://www.savvy-synergy.com/api/v1/assets");
+        } else if (presetIndex == 2) {
+            cfg.authMode = Link2RailAuthMode::DirectApiKeyOrToken;
+            cfg.loginUrl = QStringLiteral("https://cloud.nexxiot.net/oauth/token");
+            cfg.gpsTelemetryUrl = QStringLiteral("https://cloud.nexxiot.net/api/v1/assets/positions");
+            cfg.trackTraceUrl = QStringLiteral("https://cloud.nexxiot.net/api/v1/assets");
+        } else {
             cfg.authMode = Link2RailAuthMode::OAuth2PasswordGrant;
             cfg.loginUrl = QStringLiteral("https://cloud.nexxiot.net/oauth/token");
             cfg.gpsTelemetryUrl = QStringLiteral("https://cloud.nexxiot.net/api/v1/assets/positions");
             cfg.trackTraceUrl = QStringLiteral("https://cloud.nexxiot.net/api/v1/assets");
-        } else if (presetIndex == 2) {
-            cfg.authMode = Link2RailAuthMode::DirectApiKeyOrToken;
-            cfg.loginUrl = QStringLiteral("https://portal.savvy-synergy.com/api/auth/login");
-            cfg.gpsTelemetryUrl = QStringLiteral("https://portal.savvy-synergy.com/api/v1/assets/positions");
-            cfg.trackTraceUrl = QStringLiteral("https://portal.savvy-synergy.com/api/v1/assets");
-        } else {
-            cfg.authMode = Link2RailAuthMode::PortalLoginCidP;
-            cfg.loginUrl = QStringLiteral("https://portal.savvy-synergy.com/api/auth/login");
-            cfg.gpsTelemetryUrl = QStringLiteral("https://portal.savvy-synergy.com/api/v1/assets/positions");
-            cfg.trackTraceUrl = QStringLiteral("https://portal.savvy-synergy.com/api/v1/assets");
         }
         break;
     }
@@ -675,8 +686,11 @@ Link2RailConfig Link2RailClient::loadSavedConfig(TelematicsProviderId id)
         cfg.password = QString::fromUtf8(QByteArray::fromBase64(st.value(QStringLiteral("pwdB64")).toByteArray()));
         cfg.clientSecret = QString::fromUtf8(QByteArray::fromBase64(st.value(QStringLiteral("secB64")).toByteArray()));
         cfg.apiKey = QString::fromUtf8(QByteArray::fromBase64(st.value(QStringLiteral("keyB64")).toByteArray()));
+        cfg.manualBearerToken = QString::fromUtf8(QByteArray::fromBase64(st.value(QStringLiteral("tokB64")).toByteArray()));
+        cfg.manualCookieHeader = QString::fromUtf8(QByteArray::fromBase64(st.value(QStringLiteral("ckB64")).toByteArray()));
     }
     cfg.clientId = st.value(QStringLiteral("clientId")).toString();
+    cfg.sessionTokenHeaderName = st.value(QStringLiteral("sessionTokenHeaderName"), cfg.sessionTokenHeaderName).toString();
     cfg.loginUrl = st.value(QStringLiteral("loginUrl"), cfg.loginUrl).toString();
     cfg.gpsTelemetryUrl = st.value(QStringLiteral("gpsTelemetryUrl"), cfg.gpsTelemetryUrl).toString();
     cfg.trackTraceUrl = st.value(QStringLiteral("trackTraceUrl"), cfg.trackTraceUrl).toString();
@@ -688,6 +702,39 @@ Link2RailConfig Link2RailClient::loadSavedConfig(TelematicsProviderId id)
     cfg.extraHeadersRaw = st.value(QStringLiteral("extraHeadersRaw")).toString();
     cfg.pollIntervalSeconds = st.value(QStringLiteral("pollIntervalSeconds"), 60).toInt();
     cfg.autoPollEnabled = st.value(QStringLiteral("autoPollEnabled"), true).toBool();
+
+    // Automatische Migration veralteter/ungültiger Standard-URLs aus v0.9 auf geprüfte Protokoll-Endpunkte
+    bool migrated = false;
+    const Link2RailConfig fresh = presetConfig(id, 0);
+    if (id == TelematicsProviderId::Link2Rail &&
+        cfg.loginUrl == QStringLiteral("https://link2rail.dbcargo.com/api/v1/authenticate")) {
+        cfg.loginUrl = fresh.loginUrl;
+        migrated = true;
+    } else if (id == TelematicsProviderId::IntermodalTelematics &&
+               cfg.loginUrl == QStringLiteral("https://portal.intermodaltelematics.com/api/auth/login")) {
+        cfg.authMode = fresh.authMode;
+        cfg.loginUrl = fresh.loginUrl;
+        cfg.gpsTelemetryUrl = fresh.gpsTelemetryUrl;
+        cfg.trackTraceUrl = fresh.trackTraceUrl;
+        cfg.sessionTokenHeaderName = fresh.sessionTokenHeaderName;
+        migrated = true;
+    } else if (id == TelematicsProviderId::Transwaggon &&
+               cfg.loginUrl == QStringLiteral("https://portal.transwaggon.de/csp/wops/api/login")) {
+        cfg.authMode = fresh.authMode;
+        cfg.loginUrl = fresh.loginUrl;
+        migrated = true;
+    } else if (id == TelematicsProviderId::Wascosa &&
+               cfg.loginUrl.contains(QStringLiteral("portal.savvy-synergy.com"), Qt::CaseInsensitive)) {
+        cfg.authMode = fresh.authMode;
+        cfg.loginUrl = fresh.loginUrl;
+        cfg.gpsTelemetryUrl = fresh.gpsTelemetryUrl;
+        cfg.trackTraceUrl = fresh.trackTraceUrl;
+        migrated = true;
+    }
+    if (migrated) {
+        saveConfig(cfg);
+    }
+
     return cfg;
 }
 
@@ -703,16 +750,21 @@ void Link2RailClient::saveConfig(const Link2RailConfig &cfg)
     st.setValue(QStringLiteral("environmentName"), cfg.environmentName);
     st.setValue(QStringLiteral("username"), cfg.username);
     st.setValue(QStringLiteral("clientId"), cfg.clientId);
+    st.setValue(QStringLiteral("sessionTokenHeaderName"), cfg.sessionTokenHeaderName);
     st.setValue(QStringLiteral("rememberSettings"), cfg.rememberSettings);
     st.setValue(QStringLiteral("rememberPassword"), cfg.rememberPassword);
     if (cfg.rememberPassword) {
         st.setValue(QStringLiteral("pwdB64"), cfg.password.toUtf8().toBase64());
         st.setValue(QStringLiteral("secB64"), cfg.clientSecret.toUtf8().toBase64());
         st.setValue(QStringLiteral("keyB64"), cfg.apiKey.toUtf8().toBase64());
+        st.setValue(QStringLiteral("tokB64"), cfg.manualBearerToken.toUtf8().toBase64());
+        st.setValue(QStringLiteral("ckB64"), cfg.manualCookieHeader.toUtf8().toBase64());
     } else {
         st.remove(QStringLiteral("pwdB64"));
         st.remove(QStringLiteral("secB64"));
         st.remove(QStringLiteral("keyB64"));
+        st.remove(QStringLiteral("tokB64"));
+        st.remove(QStringLiteral("ckB64"));
     }
     st.setValue(QStringLiteral("loginUrl"), cfg.loginUrl);
     st.setValue(QStringLiteral("gpsTelemetryUrl"), cfg.gpsTelemetryUrl);
@@ -760,6 +812,300 @@ void Link2RailClient::onTokenRefreshTimer()
     }
 }
 
+bool Link2RailClient::parseCurlOrTokenText(const QString &inputText,
+                                           Link2RailConfig &inOutConfig,
+                                           QString *outSummary)
+{
+    QString raw = inputText.trimmed();
+    if (raw.isEmpty()) {
+        if (outSummary) *outSummary = QStringLiteral("Eingabe ist leer.");
+        return false;
+    }
+
+    // Zeilenfortsetzungen aus Bash (\) und Windows CMD (^) zusammenführen
+    raw.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    raw.replace(QRegularExpression(QStringLiteral("\\\\\\s*\\n\\s*")), QStringLiteral(" "));
+    raw.replace(QRegularExpression(QStringLiteral("\\^\\s*\\n\\s*")), QStringLiteral(" "));
+    // Windows CMD Escapes auflösen (^" -> ", ^& -> &, ^= -> =)
+    if (raw.contains(QStringLiteral("^\"")) || raw.contains(QStringLiteral("^&"))) {
+        raw.replace(QStringLiteral("^\""), QStringLiteral("\""));
+        raw.replace(QStringLiteral("^&"), QStringLiteral("&"));
+        raw.replace(QStringLiteral("^|"), QStringLiteral("|"));
+        raw.replace(QStringLiteral("^%"), QStringLiteral("%"));
+        raw.replace(QStringLiteral("^^"), QStringLiteral("^"));
+    }
+
+    QStringList extractedSummary;
+    bool extractedAny = false;
+    QStringList keptExtraHeaders;
+
+    static const QSet<QString> ignoredHeaders = {
+        QStringLiteral("accept"), QStringLiteral("accept-encoding"), QStringLiteral("accept-language"),
+        QStringLiteral("cache-control"), QStringLiteral("connection"), QStringLiteral("content-length"),
+        QStringLiteral("dnt"), QStringLiteral("host"), QStringLiteral("pragma"), QStringLiteral("priority"),
+        QStringLiteral("te"), QStringLiteral("upgrade-insecure-requests"), QStringLiteral("user-agent")
+    };
+
+    auto applyHeaderLine = [&](const QString &headerLine) {
+        const int sep = headerLine.indexOf(':');
+        if (sep <= 0) return;
+        const QString name = headerLine.left(sep).trimmed();
+        const QString lower = name.toLower();
+        const QString val = headerLine.mid(sep + 1).trimmed();
+        if (val.isEmpty()) return;
+
+        if (lower == QStringLiteral("authorization")) {
+            if (val.startsWith(QStringLiteral("Bearer "), Qt::CaseInsensitive)) {
+                inOutConfig.manualBearerToken = val.mid(7).trimmed();
+                inOutConfig.sessionTokenHeaderName.clear();
+                extractedSummary << QStringLiteral("Bearer-Token");
+            } else {
+                keptExtraHeaders << (name + QStringLiteral(": ") + val);
+                extractedSummary << QStringLiteral("Authorization-Header");
+            }
+            extractedAny = true;
+        } else if (lower == QStringLiteral("x-session-token") || lower == QStringLiteral("x-auth-token")) {
+            inOutConfig.manualBearerToken = val;
+            inOutConfig.sessionTokenHeaderName = name;
+            extractedSummary << name;
+            extractedAny = true;
+        } else if (lower == QStringLiteral("cookie")) {
+            inOutConfig.manualCookieHeader = val;
+            extractedSummary << QStringLiteral("Browser-Cookie");
+            extractedAny = true;
+        } else if (lower == QStringLiteral("x-api-key") || lower == QStringLiteral("db-api-key") ||
+                   lower == QStringLiteral("apikey") || lower == QStringLiteral("ocp-apim-subscription-key")) {
+            if (lower == QStringLiteral("ocp-apim-subscription-key")) {
+                keptExtraHeaders << (name + QStringLiteral(": ") + val);
+            } else {
+                inOutConfig.apiKey = val;
+            }
+            extractedSummary << name;
+            extractedAny = true;
+        } else if (lower == QStringLiteral("db-client-id") || lower == QStringLiteral("x-client-id")) {
+            inOutConfig.clientId = val;
+            extractedSummary << name;
+            extractedAny = true;
+        } else if (!ignoredHeaders.contains(lower) && !lower.startsWith(QStringLiteral("sec-"))) {
+            keptExtraHeaders << (name + QStringLiteral(": ") + val);
+        }
+    };
+
+    if (raw.startsWith(QStringLiteral("curl "), Qt::CaseInsensitive) ||
+        raw.startsWith(QStringLiteral("curl.exe "), Qt::CaseInsensitive)) {
+        // Shell-Tokenizer (unterstützt '...' und "...")
+        QStringList tokens;
+        QString cur;
+        QChar quote;
+        bool inToken = false;
+        for (int i = 0; i < raw.size(); ++i) {
+            const QChar ch = raw[i];
+            if (!quote.isNull()) {
+                if (ch == '\\' && quote == '"' && i + 1 < raw.size()) {
+                    cur.append(raw[++i]);
+                } else if (ch == quote) {
+                    quote = QChar();
+                } else {
+                    cur.append(ch);
+                }
+            } else {
+                if (ch == '\'' || ch == '"') {
+                    quote = ch;
+                    inToken = true;
+                } else if (ch.isSpace()) {
+                    if (inToken) {
+                        tokens << cur;
+                        cur.clear();
+                        inToken = false;
+                    }
+                } else {
+                    cur.append(ch);
+                    inToken = true;
+                }
+            }
+        }
+        if (inToken) tokens << cur;
+
+        for (int i = 1; i < tokens.size(); ++i) {
+            const QString &tok = tokens[i];
+            if ((tok == QStringLiteral("-H") || tok == QStringLiteral("--header")) && i + 1 < tokens.size()) {
+                applyHeaderLine(tokens[++i]);
+            } else if ((tok == QStringLiteral("-b") || tok == QStringLiteral("--cookie")) && i + 1 < tokens.size()) {
+                inOutConfig.manualCookieHeader = tokens[++i].trimmed();
+                extractedSummary << QStringLiteral("Browser-Cookie");
+                extractedAny = true;
+            } else if ((tok == QStringLiteral("--url")) && i + 1 < tokens.size()) {
+                const QString u = tokens[++i].trimmed();
+                if (u.startsWith(QStringLiteral("http://"), Qt::CaseInsensitive) ||
+                    u.startsWith(QStringLiteral("https://"), Qt::CaseInsensitive)) {
+                    inOutConfig.gpsTelemetryUrl = u;
+                    inOutConfig.enableGpsEndpoint = true;
+                    extractedSummary << QStringLiteral("API-URL");
+                    extractedAny = true;
+                }
+            } else if (tok.startsWith(QStringLiteral("http://"), Qt::CaseInsensitive) ||
+                       tok.startsWith(QStringLiteral("https://"), Qt::CaseInsensitive)) {
+                if (inOutConfig.gpsTelemetryUrl.isEmpty() || !extractedSummary.contains(QStringLiteral("API-URL"))) {
+                    inOutConfig.gpsTelemetryUrl = tok.trimmed();
+                    inOutConfig.enableGpsEndpoint = true;
+                    extractedSummary << QStringLiteral("API-URL");
+                    extractedAny = true;
+                }
+            }
+        }
+    } else {
+        // Direkte Eingabe: einzelne Header-Zeilen, Bearer-Token, JWT oder Cookie-String
+        const QStringList lines = raw.split('\n', Qt::SkipEmptyParts);
+        for (const QString &line : lines) {
+            const QString t = line.trimmed();
+            if (t.contains(':') && !t.startsWith(QStringLiteral("http://")) && !t.startsWith(QStringLiteral("https://"))) {
+                applyHeaderLine(t);
+            } else if (t.startsWith(QStringLiteral("Bearer "), Qt::CaseInsensitive)) {
+                inOutConfig.manualBearerToken = t.mid(7).trimmed();
+                inOutConfig.sessionTokenHeaderName.clear();
+                extractedSummary << QStringLiteral("Bearer-Token");
+                extractedAny = true;
+            } else if (t.startsWith(QStringLiteral("http://"), Qt::CaseInsensitive) ||
+                       t.startsWith(QStringLiteral("https://"), Qt::CaseInsensitive)) {
+                inOutConfig.gpsTelemetryUrl = t;
+                inOutConfig.enableGpsEndpoint = true;
+                extractedSummary << QStringLiteral("API-URL");
+                extractedAny = true;
+            } else if (t.contains('=') && t.contains(';')) {
+                inOutConfig.manualCookieHeader = t;
+                extractedSummary << QStringLiteral("Browser-Cookie");
+                extractedAny = true;
+            } else if (t.size() >= 12 && !t.contains(' ')) {
+                inOutConfig.manualBearerToken = t;
+                if (inOutConfig.providerId == TelematicsProviderId::IntermodalTelematics && !t.startsWith(QStringLiteral("eyJ"))) {
+                    inOutConfig.sessionTokenHeaderName = QStringLiteral("x-session-token");
+                    extractedSummary << QStringLiteral("x-session-token");
+                } else {
+                    extractedSummary << QStringLiteral("Token");
+                }
+                extractedAny = true;
+            }
+        }
+    }
+
+    if (!extractedAny) {
+        if (outSummary) {
+            *outSummary = QStringLiteral("Kein cURL-Befehl, Token, Cookie oder API-Header erkannt.");
+        }
+        return false;
+    }
+
+    inOutConfig.authMode = Link2RailAuthMode::DirectApiKeyOrToken;
+    if (!keptExtraHeaders.isEmpty()) {
+        inOutConfig.extraHeadersRaw = keptExtraHeaders.join('\n');
+    }
+
+    extractedSummary.removeDuplicates();
+    if (outSummary) {
+        *outSummary = QStringLiteral("Übernommen: %1").arg(extractedSummary.join(QStringLiteral(" + ")));
+    }
+    return true;
+}
+
+bool Link2RailClient::applyFromCurlOrToken(const QString &inputText, QString *outSummary)
+{
+    Link2RailConfig cfg = m_config;
+    QString summary;
+    if (!parseCurlOrTokenText(inputText, cfg, &summary)) {
+        if (outSummary) *outSummary = summary;
+        appendLog(QStringLiteral("Browser-Session/cURL-Import abgelehnt: ") + summary);
+        return false;
+    }
+
+    if (outSummary) *outSummary = summary;
+    appendLog(QStringLiteral("Browser-Session / cURL erkannt (%1). Aktiviere Direkt-Sitzung ...").arg(summary));
+    login(cfg);
+    return true;
+}
+
+void Link2RailClient::probeConnection(const Link2RailConfig &cfgIn)
+{
+    const QString pName = info().shortName;
+    QString targetStr = cfgIn.loginUrl.trimmed();
+    if (targetStr.isEmpty() || cfgIn.authMode == Link2RailAuthMode::DirectApiKeyOrToken ||
+        cfgIn.authMode == Link2RailAuthMode::HttpBasicAuth) {
+        targetStr = cfgIn.gpsTelemetryUrl.trimmed();
+    }
+    if (targetStr.isEmpty()) {
+        targetStr = info().portalUrl;
+    }
+
+    const QUrl url(targetStr);
+    if (!url.isValid() || url.scheme().isEmpty()) {
+        const QString msg = QStringLiteral("[%1] Verbindungstest: Ungültige URL '%2'.").arg(pName, targetStr);
+        appendLog(msg);
+        emit connectionTestFinished(false, msg);
+        return;
+    }
+
+    QNetworkRequest req(url);
+    req.setTransferTimeout(12000);
+    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    req.setRawHeader("Accept", "application/json, application/xml, text/html, */*");
+    req.setRawHeader("User-Agent", "SHS-Logistics-Telematics-Client/1.0 (Qt6)");
+
+    appendLog(QStringLiteral("🔍 Verbindungstest -> GET %1 (TLS/SSL: %2) ...")
+                  .arg(url.toString(), QSslSocket::supportsSsl() ? QStringLiteral("OK") : QStringLiteral("FEHLT")));
+
+    QNetworkReply *reply = m_netManager->get(req);
+    reply->setProperty("probeTargetUrl", url.toString());
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        onProbeReplyFinished(reply);
+    });
+}
+
+void Link2RailClient::onProbeReplyFinished(QNetworkReply *reply)
+{
+    const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QString ct = reply->header(QNetworkRequest::ContentTypeHeader).toString();
+    const QUrl finalUrl = reply->url();
+    const QNetworkReply::NetworkError netErr = reply->error();
+    const QString errStr = reply->errorString();
+    const QByteArray raw = reply->readAll();
+    reply->deleteLater();
+
+    const QString pName = info().shortName;
+    if (httpStatus == 0 && netErr != QNetworkReply::NoError) {
+        const QString report = QStringLiteral(
+            "🔴 %1 Server nicht erreichbar: %2\n"
+            "• Prüfe Domain/URL, Internetverbindung, Proxy oder Firewall.")
+            .arg(pName, errStr);
+        appendLog(report);
+        emit connectionTestFinished(false, report);
+        return;
+    }
+
+    const QString bodyLow = QString::fromUtf8(raw.left(600)).trimmed().toLower();
+    const bool isHtml = ct.contains(QStringLiteral("text/html"), Qt::CaseInsensitive) ||
+                        bodyLow.startsWith(QStringLiteral("<!doctype html")) ||
+                        bodyLow.startsWith(QStringLiteral("<html"));
+
+    QString diagnosis;
+    if (httpStatus == 401 || httpStatus == 403 || httpStatus == 405) {
+        diagnosis = QStringLiteral("API-Endpunkt ist erreichbar und erwartet Authentifizierung / POST-Login (sehr gutes Zeichen!).");
+    } else if (httpStatus >= 200 && httpStatus < 300 && isHtml) {
+        diagnosis = QStringLiteral("Server erreichbar, liefert aber eine HTML-Webseite (Webportal / SSO). "
+                                   "Für Web-SSO nutze '📋 Browser-Session / cURL' oder trage die REST-API-URL ein.");
+    } else if (httpStatus >= 200 && httpStatus < 300) {
+        diagnosis = QStringLiteral("Server erreichbar und liefert API-Daten (%1).").arg(ct.isEmpty() ? QStringLiteral("OK") : ct);
+    } else if (httpStatus == 404) {
+        diagnosis = QStringLiteral("Host erreichbar, aber Pfad existiert nicht (HTTP 404). Bitte Login-/API-URL prüfen oder Vorlage wechseln.");
+    } else {
+        diagnosis = QStringLiteral("HTTP %1 (%2).").arg(httpStatus).arg(errStr);
+    }
+
+    const QString report = QStringLiteral(
+        "🟢 %1 Verbindungstest: HTTP %2 | Ziel: %3 | Typ: %4\n• Diagnose: %5")
+        .arg(pName).arg(httpStatus).arg(finalUrl.toString(), ct.isEmpty() ? QStringLiteral("-") : ct, diagnosis);
+    appendLog(report);
+    emit connectionTestFinished(true, report);
+}
+
 void Link2RailClient::login(const Link2RailConfig &cfgIn)
 {
     m_config = cfgIn;
@@ -769,8 +1115,14 @@ void Link2RailClient::login(const Link2RailConfig &cfgIn)
 
     // Direkte Modi ohne separaten Login-POST: DirectApiKeyOrToken oder HttpBasicAuth
     if (m_config.authMode == Link2RailAuthMode::DirectApiKeyOrToken) {
-        if (m_config.manualBearerToken.trimmed().isEmpty() && m_config.apiKey.trimmed().isEmpty()) {
-            const QString err = QStringLiteral("[%1] Bitte entweder ein Bearer-Token oder einen API-Key angeben.").arg(pName);
+        const bool hasToken = !m_config.manualBearerToken.trimmed().isEmpty();
+        const bool hasKey   = !m_config.apiKey.trimmed().isEmpty();
+        const bool hasCookie = !m_config.manualCookieHeader.trimmed().isEmpty();
+        const bool hasExtra = !m_config.extraHeadersRaw.trimmed().isEmpty();
+        if (!hasToken && !hasKey && !hasCookie && !hasExtra) {
+            const QString err = QStringLiteral(
+                "[%1] Bitte ein Bearer-/Session-Token, einen API-Key, ein Browser-Cookie oder über '📋 Browser-Session / cURL' eine Sitzung angeben.")
+                .arg(pName);
             appendLog(QStringLiteral("FEHLER: ") + err);
             emit loginFailed(err);
             return;
@@ -779,14 +1131,23 @@ void Link2RailClient::login(const Link2RailConfig &cfgIn)
         if (m_accessToken.startsWith(QStringLiteral("Bearer "), Qt::CaseInsensitive)) {
             m_accessToken = m_accessToken.mid(7).trimmed();
         }
+        m_sessionId = (m_config.sessionTokenHeaderName.compare(QStringLiteral("x-session-token"), Qt::CaseInsensitive) == 0)
+                          ? m_accessToken : QString();
         m_tokenType = QStringLiteral("Bearer");
         m_authenticated = true;
         m_authenticatedUser = !m_config.username.trimmed().isEmpty()
                                   ? m_config.username.trimmed()
-                                  : (!m_config.clientId.trimmed().isEmpty() ? m_config.clientId.trimmed() : QStringLiteral("API-Key"));
-        m_tokenExpiresAt = QDateTime::currentDateTimeUtc().addSecs(3600);
+                                  : (!m_config.clientId.trimmed().isEmpty()
+                                         ? m_config.clientId.trimmed()
+                                         : (hasCookie ? QStringLiteral("Browser-Session") : QStringLiteral("Token/API-Key")));
+        m_tokenExpiresAt = QDateTime::currentDateTimeUtc().addSecs(7200);
 
-        const QString msg = QStringLiteral("%1: Direkte Token-/API-Key-Authentifizierung aktiviert (%2).").arg(pName, m_authenticatedUser);
+        QStringList arts;
+        if (hasToken) arts << (m_config.sessionTokenHeaderName.isEmpty() ? QStringLiteral("Bearer-Token") : m_config.sessionTokenHeaderName);
+        if (hasCookie) arts << QStringLiteral("Cookie");
+        if (hasKey) arts << QStringLiteral("API-Key");
+        const QString msg = QStringLiteral("%1: Direkt-Authentifizierung aktiv (%2 | %3).")
+                                .arg(pName, m_authenticatedUser, arts.join(QStringLiteral(" + ")));
         appendLog(msg);
         emit authenticationChanged(true, msg);
         emit loginSucceeded(m_authenticatedUser, msg);
@@ -824,7 +1185,9 @@ void Link2RailClient::login(const Link2RailConfig &cfgIn)
     }
 
     if ((m_config.authMode == Link2RailAuthMode::PortalLoginCidP ||
-         m_config.authMode == Link2RailAuthMode::OAuth2PasswordGrant) &&
+         m_config.authMode == Link2RailAuthMode::OAuth2PasswordGrant ||
+         m_config.authMode == Link2RailAuthMode::ImtTenoAuth ||
+         m_config.authMode == Link2RailAuthMode::HtmlFormPost) &&
         (m_config.username.trimmed().isEmpty() || m_config.password.isEmpty())) {
         const QString err = QStringLiteral("[%1] Bitte Benutzername (E-Mail) und Passwort eingeben.").arg(pName);
         appendLog(QStringLiteral("FEHLER: ") + err);
@@ -834,10 +1197,11 @@ void Link2RailClient::login(const Link2RailConfig &cfgIn)
 
     QNetworkRequest req(url);
     req.setTransferTimeout(20000);
-    req.setRawHeader("Accept", "application/json, application/xml, text/plain, */*");
-    req.setRawHeader("User-Agent", "SHS-Logistics-Telematics-Client/0.9");
+    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    req.setRawHeader("Accept", "application/json, application/xml, text/html, text/plain, */*");
+    req.setRawHeader("User-Agent", "SHS-Logistics-Telematics-Client/1.0 (Qt6)");
 
-    if (!m_config.clientId.trimmed().isEmpty()) {
+    if (!m_config.clientId.trimmed().isEmpty() && m_config.authMode != Link2RailAuthMode::ImtTenoAuth) {
         req.setRawHeader("DB-Client-Id", m_config.clientId.trimmed().toUtf8());
         req.setRawHeader("X-Client-Id", m_config.clientId.trimmed().toUtf8());
     }
@@ -847,7 +1211,38 @@ void Link2RailClient::login(const Link2RailConfig &cfgIn)
     }
 
     QByteArray body;
-    if (m_config.authMode == Link2RailAuthMode::PortalLoginCidP) {
+    if (m_config.authMode == Link2RailAuthMode::ImtTenoAuth) {
+        // Intermodal Telematics (IMT) TenoSessionService:
+        // POST /authorization/v1/authentication -> { userId, password, accountAlias, consumer, consumerVersion }
+        req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+        QJsonObject payload;
+        payload[QStringLiteral("userId")] = m_config.username.trimmed();
+        payload[QStringLiteral("password")] = m_config.password;
+        if (!m_config.clientId.trimmed().isEmpty()) {
+            payload[QStringLiteral("accountAlias")] = m_config.clientId.trimmed();
+        }
+        payload[QStringLiteral("consumer")] = QStringLiteral("web-portal");
+        payload[QStringLiteral("consumerVersion")] = QStringLiteral("1.0");
+        body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
+    } else if (m_config.authMode == Link2RailAuthMode::HtmlFormPost) {
+        // HTML-Formular-POST (z. B. TRANSWAGGON WOPS: twa.portal.Home.cls)
+        req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/x-www-form-urlencoded"));
+        QUrlQuery q;
+        if (m_providerId == TelematicsProviderId::Transwaggon ||
+            url.host().contains(QStringLiteral("transwaggon"), Qt::CaseInsensitive)) {
+            q.addQueryItem(QStringLiteral("dummyChar"), QString::fromUtf8("\xE2\x98\xA0"));
+            q.addQueryItem(QStringLiteral("langID"), QStringLiteral("DE"));
+            q.addQueryItem(QStringLiteral("key"), QString());
+            q.addQueryItem(QStringLiteral("PRTG"), QStringLiteral("PRTG-10"));
+            q.addQueryItem(QStringLiteral("login"), m_config.username.trimmed());
+            q.addQueryItem(QStringLiteral("password"), m_config.password);
+        } else {
+            q.addQueryItem(QStringLiteral("username"), m_config.username.trimmed());
+            q.addQueryItem(QStringLiteral("login"), m_config.username.trimmed());
+            q.addQueryItem(QStringLiteral("password"), m_config.password);
+        }
+        body = q.toString(QUrl::FullyEncoded).toUtf8();
+    } else if (m_config.authMode == Link2RailAuthMode::PortalLoginCidP) {
         req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
         QJsonObject payload;
         payload[QStringLiteral("username")] = m_config.username.trimmed();
@@ -902,11 +1297,13 @@ void Link2RailClient::onLoginReplyFinished(QNetworkReply *reply)
 {
     m_pendingRequests = std::max(0, m_pendingRequests - 1);
     const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QString contentType = reply->header(QNetworkRequest::ContentTypeHeader).toString();
     const QByteArray raw = reply->readAll();
     const QNetworkReply::NetworkError netErr = reply->error();
     const QString netErrStr = reply->errorString();
     const QByteArray hdrAuth = reply->rawHeader("Authorization");
     const QByteArray hdrSession = reply->rawHeader("X-Session-Id");
+    const QByteArray hdrSessionToken = reply->rawHeader("x-session-token");
     const QByteArray hdrToken = reply->rawHeader("X-Auth-Token");
     const QUrl reqUrl = reply->url();
     reply->deleteLater();
@@ -917,13 +1314,13 @@ void Link2RailClient::onLoginReplyFinished(QNetworkReply *reply)
         const QString detail = QString::fromUtf8(raw).left(400).trimmed();
         QString hint;
         if (httpStatus == 401) {
-            hint = QStringLiteral(" (Zugangsdaten abgelehnt – Benutzername, Passwort oder API-Key prüfen)");
+            hint = QStringLiteral(" (Zugangsdaten abgelehnt – Benutzername, Passwort, Account-Alias oder API-Key prüfen)");
         } else if (httpStatus == 403) {
-            hint = QStringLiteral(" (Zugriff verweigert – API-Berechtigung / API-Key prüfen)");
+            hint = QStringLiteral(" (Zugriff verweigert – API-Berechtigung / API-Key / Account-Alias prüfen)");
         } else if (httpStatus == 404 || httpStatus == 405) {
-            hint = QStringLiteral(" (Login-Endpunkt-URL prüfen – ggf. Auth-Modus auf OAuth2, Basic Auth oder API-Key umstellen)");
+            hint = QStringLiteral(" (Login-Endpunkt existiert nicht oder erwartet Browser-SSO -> '📋 Browser-Session / cURL' nutzen oder Vorlage wechseln)");
         } else if (httpStatus == 0) {
-            hint = QStringLiteral(" (Server nicht erreichbar / Proxy / Firewall prüfen)");
+            hint = QStringLiteral(" (Server nicht erreichbar – Domain, Internetverbindung, Proxy oder Firewall prüfen)");
         }
 
         const QString errMsg = QStringLiteral("%1 Anmeldung fehlgeschlagen [HTTP %2]: %3%4%5")
@@ -935,34 +1332,106 @@ void Link2RailClient::onLoginReplyFinished(QNetworkReply *reply)
         return;
     }
 
+    const QString bodyStr = QString::fromUtf8(raw);
+    const QString bodyLow = bodyStr.left(4000).trimmed().toLower();
+    const bool isHtmlResponse = contentType.contains(QStringLiteral("text/html"), Qt::CaseInsensitive) ||
+                                bodyLow.startsWith(QStringLiteral("<!doctype html")) ||
+                                bodyLow.startsWith(QStringLiteral("<html"));
+
+    // HTML-Formular-Login (z. B. TRANSWAGGON WOPS)
+    if (m_config.authMode == Link2RailAuthMode::HtmlFormPost) {
+        const bool bouncedToLogin = reqUrl.toString().contains(QStringLiteral("err=1"), Qt::CaseInsensitive) ||
+                                    bodyLow.contains(QStringLiteral("name=\"loginform\"")) ||
+                                    bodyLow.contains(QStringLiteral("type=\"password\"")) ||
+                                    bodyLow.contains(QStringLiteral("ungültige anmeldedaten")) ||
+                                    bodyLow.contains(QStringLiteral("invalid login"));
+        const int cookieCount = m_cookieJar ? m_cookieJar->cookiesForUrl(reqUrl).size() : 0;
+        if (bouncedToLogin) {
+            m_authenticated = false;
+            const QString err = QStringLiteral(
+                "%1 Formular-Anmeldung abgelehnt: Portal hat erneut die Login-Maske geliefert (%2).\n"
+                "Bitte Benutzername/Passwort prüfen oder über '📋 Browser-Session / cURL' die aktive Browser-Sitzung übernehmen.")
+                .arg(pName, reqUrl.toString());
+            appendLog(err);
+            emit authenticationChanged(false, err);
+            emit loginFailed(err);
+            return;
+        }
+        m_accessToken.clear();
+        m_sessionId = (cookieCount > 0) ? QStringLiteral("HTML-COOKIE-SESSION") : QStringLiteral("HTML-FORM-OK");
+        m_authenticated = true;
+        m_authenticatedUser = m_config.username.trimmed();
+        m_tokenExpiresAt = QDateTime::currentDateTimeUtc().addSecs(3600);
+        const QString okMsg = QStringLiteral("%1 Formular-Anmeldung erfolgreich (%2 | %3 Cookie(s)).")
+                                  .arg(pName, m_authenticatedUser).arg(cookieCount);
+        appendLog(okMsg);
+        emit authenticationChanged(true, okMsg);
+        emit loginSucceeded(m_authenticatedUser, okMsg);
+        if (m_fetchAfterLogin) {
+            m_fetchAfterLogin = false;
+            fetchAllLiveData();
+        }
+        return;
+    }
+
+    // Bei JSON-/OAuth-Modi: Wenn der Server HTML (SPA/SSO-Webseite) statt JSON liefert -> klare Diagnose!
+    if (isHtmlResponse) {
+        m_authenticated = false;
+        const QString warn = QStringLiteral(
+            "%1: Der Server hat eine HTML-Webseite statt einer JSON-API-Antwort geliefert (HTTP %2, Ziel: %3).\n"
+            "Viele Telematik-Portale verwenden Web-SSO / 2FA (Salesforce, Entra, Flutter/Angular).\n"
+            "Empfehlung: Klicke auf '📋 Browser-Session / cURL', melde dich im Browser an und füge den API-Request (Als cURL kopieren) oder dein Token ein.")
+            .arg(pName).arg(httpStatus).arg(reqUrl.toString());
+        appendLog(warn);
+        emit authenticationChanged(false, warn);
+        emit loginFailed(warn);
+        return;
+    }
+
     m_accessToken.clear();
     m_refreshToken.clear();
     m_sessionId.clear();
     m_tokenType = QStringLiteral("Bearer");
     int expiresInSec = 3600;
 
+    const QStringList tokenKeys = {
+        QStringLiteral("sessionToken"), QStringLiteral("session_token"), QStringLiteral("x-session-token"),
+        QStringLiteral("access_token"), QStringLiteral("accessToken"),
+        QStringLiteral("token"), QStringLiteral("jwt"), QStringLiteral("id_token"),
+        QStringLiteral("idToken"), QStringLiteral("authToken"), QStringLiteral("apiToken")
+    };
+    const QStringList sessionKeys = {
+        QStringLiteral("sessionToken"), QStringLiteral("sessionId"),
+        QStringLiteral("sessionID"), QStringLiteral("session_id")
+    };
+
     const QJsonDocument doc = QJsonDocument::fromJson(raw);
     if (doc.isObject()) {
         const QJsonObject obj = doc.object();
-        m_accessToken = firstString(obj, {
-            QStringLiteral("access_token"), QStringLiteral("accessToken"),
-            QStringLiteral("token"), QStringLiteral("jwt"), QStringLiteral("id_token"),
-            QStringLiteral("idToken"), QStringLiteral("authToken"), QStringLiteral("apiToken")
-        });
-        if (m_accessToken.isEmpty() && obj.value(QStringLiteral("data")).isObject()) {
-            const QJsonObject dObj = obj.value(QStringLiteral("data")).toObject();
-            m_accessToken = firstString(dObj, {QStringLiteral("access_token"), QStringLiteral("accessToken"), QStringLiteral("token"), QStringLiteral("jwt")});
-            m_sessionId = firstString(dObj, {QStringLiteral("sessionId"), QStringLiteral("sessionID"), QStringLiteral("session_id")});
+        m_accessToken = firstString(obj, tokenKeys);
+        m_sessionId = firstString(obj, sessionKeys);
+        for (const QString &subKey : {QStringLiteral("data"), QStringLiteral("session"),
+                                      QStringLiteral("result"), QStringLiteral("authentication")}) {
+            if (obj.value(subKey).isObject()) {
+                const QJsonObject sub = obj.value(subKey).toObject();
+                if (m_accessToken.isEmpty()) m_accessToken = firstString(sub, tokenKeys);
+                if (m_sessionId.isEmpty()) m_sessionId = firstString(sub, sessionKeys);
+                if (m_refreshToken.isEmpty()) m_refreshToken = firstString(sub, {QStringLiteral("refresh_token"), QStringLiteral("refreshToken")});
+                firstInt(sub, {QStringLiteral("expires_in"), QStringLiteral("expiresIn")}, expiresInSec);
+            }
         }
-        m_refreshToken = firstString(obj, {QStringLiteral("refresh_token"), QStringLiteral("refreshToken")});
-        if (m_sessionId.isEmpty()) {
-            m_sessionId = firstString(obj, {QStringLiteral("sessionId"), QStringLiteral("sessionID"), QStringLiteral("session_id")});
+        if (m_refreshToken.isEmpty()) {
+            m_refreshToken = firstString(obj, {QStringLiteral("refresh_token"), QStringLiteral("refreshToken")});
         }
         const QString tt = firstString(obj, {QStringLiteral("token_type"), QStringLiteral("tokenType")});
         if (!tt.isEmpty()) m_tokenType = tt;
         firstInt(obj, {QStringLiteral("expires_in"), QStringLiteral("expiresIn")}, expiresInSec);
     }
 
+    if (m_accessToken.isEmpty() && !hdrSessionToken.isEmpty()) {
+        m_accessToken = QString::fromUtf8(hdrSessionToken).trimmed();
+        m_sessionId = m_accessToken;
+    }
     if (m_accessToken.isEmpty() && !hdrAuth.isEmpty()) {
         QString a = QString::fromUtf8(hdrAuth).trimmed();
         if (a.startsWith(QStringLiteral("Bearer "), Qt::CaseInsensitive)) a = a.mid(7).trimmed();
@@ -974,11 +1443,15 @@ void Link2RailClient::onLoginReplyFinished(QNetworkReply *reply)
     if (m_sessionId.isEmpty() && !hdrSession.isEmpty()) {
         m_sessionId = QString::fromUtf8(hdrSession).trimmed();
     }
+    if (m_config.authMode == Link2RailAuthMode::ImtTenoAuth && m_sessionId.isEmpty() && !m_accessToken.isEmpty()) {
+        m_sessionId = m_accessToken;
+    }
 
     const int cookieCount = m_cookieJar ? m_cookieJar->cookiesForUrl(reqUrl).size() : 0;
     if (m_accessToken.isEmpty() && m_sessionId.isEmpty() && cookieCount == 0) {
-        const QString warn = QStringLiteral("%1: HTTP %2 erhalten, aber weder Access-Token, Session-ID noch Cookie gefunden.\nAntwort: %3")
-                                 .arg(pName).arg(httpStatus).arg(QString::fromUtf8(raw).left(300));
+        const QString warn = QStringLiteral(
+            "%1: HTTP %2 erhalten, aber weder Access-Token, x-session-token, Session-ID noch Cookie gefunden.\nAntwort: %3")
+            .arg(pName).arg(httpStatus).arg(bodyStr.left(300));
         appendLog(warn);
         emit loginFailed(warn);
         return;
@@ -991,9 +1464,10 @@ void Link2RailClient::onLoginReplyFinished(QNetworkReply *reply)
     m_tokenExpiresAt = QDateTime::currentDateTimeUtc().addSecs(std::max(180, expiresInSec));
 
     QStringList authArtifacts;
-    if (!m_accessToken.isEmpty()) authArtifacts << QStringLiteral("JWT/Bearer");
-    if (!m_sessionId.isEmpty())   authArtifacts << QStringLiteral("SessionID");
-    if (cookieCount > 0)          authArtifacts << QString("%1 Cookie(s)").arg(cookieCount);
+    if (m_config.authMode == Link2RailAuthMode::ImtTenoAuth) authArtifacts << QStringLiteral("x-session-token");
+    else if (!m_accessToken.isEmpty()) authArtifacts << QStringLiteral("JWT/Bearer");
+    if (!m_sessionId.isEmpty() && m_config.authMode != Link2RailAuthMode::ImtTenoAuth) authArtifacts << QStringLiteral("SessionID");
+    if (cookieCount > 0) authArtifacts << QString("%1 Cookie(s)").arg(cookieCount);
 
     const QString okMsg = QStringLiteral("%1 angemeldet (%2 | %3 | bis %4).")
                               .arg(pName, m_authenticatedUser,
@@ -1031,21 +1505,33 @@ void Link2RailClient::logout()
 void Link2RailClient::applyAuthHeaders(QNetworkRequest &req) const
 {
     req.setTransferTimeout(25000);
+    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
     req.setRawHeader("Accept", "application/json, application/xml, text/csv, */*");
-    req.setRawHeader("User-Agent", "SHS-Logistics-Telematics-Client/0.9");
+    req.setRawHeader("User-Agent", "SHS-Logistics-Telematics-Client/1.0 (Qt6)");
 
-    if (m_config.authMode == Link2RailAuthMode::HttpBasicAuth && !m_config.username.trimmed().isEmpty()) {
+    if (m_config.authMode == Link2RailAuthMode::ImtTenoAuth) {
+        const QString tok = !m_sessionId.isEmpty() ? m_sessionId : m_accessToken;
+        if (!tok.isEmpty()) {
+            req.setRawHeader("x-session-token", tok.toUtf8());
+        }
+    } else if (!m_config.sessionTokenHeaderName.trimmed().isEmpty() && !m_accessToken.isEmpty()) {
+        req.setRawHeader(m_config.sessionTokenHeaderName.trimmed().toUtf8(), m_accessToken.toUtf8());
+    } else if (m_config.authMode == Link2RailAuthMode::HttpBasicAuth && !m_config.username.trimmed().isEmpty()) {
         const QByteArray creds = (m_config.username.trimmed() + QLatin1Char(':') + m_config.password).toUtf8().toBase64();
         req.setRawHeader("Authorization", "Basic " + creds);
     } else if (!m_accessToken.isEmpty()) {
         req.setRawHeader("Authorization", (m_tokenType + QStringLiteral(" ") + m_accessToken).toUtf8());
     }
 
-    if (!m_sessionId.isEmpty()) {
+    if (!m_sessionId.isEmpty() && m_config.authMode != Link2RailAuthMode::ImtTenoAuth &&
+        m_config.authMode != Link2RailAuthMode::HtmlFormPost) {
         req.setRawHeader("sessionId", m_sessionId.toUtf8());
         req.setRawHeader("X-Session-Id", m_sessionId.toUtf8());
     }
-    if (!m_config.clientId.trimmed().isEmpty()) {
+    if (!m_config.manualCookieHeader.trimmed().isEmpty()) {
+        req.setRawHeader("Cookie", m_config.manualCookieHeader.trimmed().toUtf8());
+    }
+    if (!m_config.clientId.trimmed().isEmpty() && m_config.authMode != Link2RailAuthMode::ImtTenoAuth) {
         req.setRawHeader("DB-Client-Id", m_config.clientId.trimmed().toUtf8());
         req.setRawHeader("X-Client-Id", m_config.clientId.trimmed().toUtf8());
     }
@@ -1192,6 +1678,8 @@ void Link2RailClient::onDataReplyFinished(QNetworkReply *reply)
     m_pendingRequests = std::max(0, m_pendingRequests - 1);
     const QString sourceTag = reply->property("sourceTag").toString();
     const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QString contentType = reply->header(QNetworkRequest::ContentTypeHeader).toString();
+    const QUrl finalUrl = reply->url();
     const QByteArray raw = reply->readAll();
     const QNetworkReply::NetworkError netErr = reply->error();
     const QString netErrStr = reply->errorString();
@@ -1210,9 +1698,21 @@ void Link2RailClient::onDataReplyFinished(QNetworkReply *reply)
     }
 
     m_lastRawResponse = QString::fromUtf8(raw);
+    const QByteArray trimmed = raw.trimmed();
+    const QByteArray lowHead = trimmed.left(200).toLower();
+    if (contentType.contains(QStringLiteral("text/html"), Qt::CaseInsensitive) ||
+        lowHead.startsWith("<!doctype html") || lowHead.startsWith("<html")) {
+        const QString htmlMsg = QStringLiteral(
+            "[%1] Warnung: Endpunkt (%2) lieferte HTML statt JSON/XML/CSV (ggf. falsche Daten-URL oder Web-Login abgelaufen). "
+            "Tipp: Per '📋 Browser-Session / cURL' die echte JSON-/XML-Abfrage aus dem Browser übernehmen oder CSV/JSON über '📂 Datei laden' importieren.")
+            .arg(sourceTag, finalUrl.toString());
+        appendLog(htmlMsg);
+        emit apiError(htmlMsg);
+        return;
+    }
+
     QString parseSummary;
     QVector<Link2RailWagonRecord> parsed;
-    const QByteArray trimmed = raw.trimmed();
     if (trimmed.startsWith('<')) {
         parsed = parseXmlPayload(raw, sourceTag, &parseSummary, m_providerId);
     } else if (trimmed.startsWith('{') || trimmed.startsWith('[')) {

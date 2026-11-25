@@ -14,7 +14,7 @@ Unicode true
 
 !define APPNAME   "SHS_Logistics"
 !define APPTITLE  "SHS Logistics GmbH - Werksbahn & Logistik Leitsystem"
-!define APPVER    "0.9"
+!define APPVER    "1.0"
 !define REPO      ".."
 !define RELDIR    "Release_Standalone"
 !define AUTHOR    "Frank U. Rueckert & Sevda Dawd"
@@ -42,7 +42,7 @@ BrandingText "SHS Logistics GmbH - Partner [schafft Zukunft] Stahl"
 
 !define MUI_ABORTWARNING
 !define MUI_WELCOMEPAGE_TITLE "Willkommen beim Setup von SHS Logistics GmbH (${APPVER})"
-!define MUI_WELCOMEPAGE_TEXT "Dieser Assistent installiert das C++/Qt-6 Multi-Telematik Live-GPS-Leitsystem der SHS Logistics GmbH ('Partner [schafft Zukunft] Stahl') auf Ihrem Computer.$\r$\n$\r$\nWissenschaftliche Leitung & Entwicklung:$\r$\nFrank U. Rueckert (frank.rueckert@htwsaar.de)$\r$\nEntwicklerin: Sevda Dawd (sevdasdawd@gmail.com)$\r$\nhtw saar - Hochschule fuer Technik und Wirtschaft des Saarlandes$\r$\n$\r$\nEnthalten im Release-Paket (Version ${APPVER}):$\r$\n- 6 Telematik-Dienste (link2rail, IMT, DOT, TRANSWAGGON, Innofreight, Wascosa)$\r$\n- Alleine lauffaehiges Release (SHS_Logistics.exe inkl. Qt 6.9 & Kartenkacheln)$\r$\n- Alle PDF-Manuals (Technisches Handbuch & Kurzanleitung)"
+!define MUI_WELCOMEPAGE_TEXT "Dieser Assistent installiert das Dual-Mode C++/Qt-6 Werksbahn- & Multi-Telematik-Leitsystem der SHS Logistics GmbH ('Partner [schafft Zukunft] Stahl') auf Ihrem Computer.$\r$\n$\r$\nWissenschaftliche Leitung & Entwicklung:$\r$\nFrank U. Rueckert (frank.rueckert@htwsaar.de)$\r$\nEntwicklerin: Sevda Dawd (sevdasdawd@gmail.com)$\r$\nhtw saar - Hochschule fuer Technik und Wirtschaft des Saarlandes$\r$\n$\r$\nEnthalten im Release-Paket (Version ${APPVER}):$\r$\n- Dual-Mode: Simulationsmodus (Spiel) <-> Live-GPS-Modus (6 Portale)$\r$\n- 6 Telematik-Logins (link2rail, IMT, DOT, TRANSWAGGON, Innofreight, Wascosa) inkl. Browser-Session/cURL-Import$\r$\n- Alleine lauffaehiges Release (SHS_Logistics.exe inkl. Qt 6.9 & Kartenkacheln) + PDF-Manuals"
 
 !define MUI_FINISHPAGE_RUN "$INSTDIR\SHS_Logistics.exe"
 !define MUI_FINISHPAGE_RUN_TEXT "SHS Logistics Leitsystem jetzt starten"

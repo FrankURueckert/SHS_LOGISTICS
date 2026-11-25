@@ -14,12 +14,12 @@
 #include <QTimer>
 
 enum class TelematicsProviderId {
-    Link2Rail = 0,          // DB Cargo link2rail
+    Link2Rail = 0,            // DB Cargo link2rail
     IntermodalTelematics = 1, // Intermodal Telematics (IMT)
-    DotTelematik = 2,       // DOT Telematik (DOT-Link / Unified API)
-    Transwaggon = 3,        // TRANSWAGGON (WOPS / CIS)
-    Innofreight = 4,        // Innofreight OS
-    Wascosa = 5             // Wascosa (SAVVY Synergy / Nexxiot / Wascosa Digital)
+    DotTelematik = 2,         // DOT Telematik (DOT-Link / Unified API)
+    Transwaggon = 3,          // TRANSWAGGON (WOPS / CIS)
+    Innofreight = 4,          // Innofreight OS
+    Wascosa = 5               // Wascosa (Nexxiot Connect / SAVVY Synergy / Wascosa Digital)
 };
 
 struct TelematicsProviderInfo {
@@ -37,8 +37,10 @@ enum class Link2RailAuthMode {
     PortalLoginCidP = 0,     // Benutzername/E-Mail + Passwort -> JSON Login-POST (JWT / SessionID / Cookie)
     OAuth2PasswordGrant = 1, // OAuth2 Token-Endpunkt (grant_type=password + Client-ID/Secret)
     OAuth2ClientCreds = 2,   // OAuth2 Token-Endpunkt (grant_type=client_credentials)
-    DirectApiKeyOrToken = 3, // Direkter Bearer-Token / Session-ID / API-Key ohne separaten Login-POST
-    HttpBasicAuth = 4        // HTTP Basic Auth (Benutzername + Passwort im Authorization-Header)
+    DirectApiKeyOrToken = 3, // Direkter Bearer-Token / Session-Token / Cookie / API-Key ohne Login-POST
+    HttpBasicAuth = 4,       // HTTP Basic Auth (Benutzername + Passwort im Authorization-Header)
+    ImtTenoAuth = 5,         // Intermodal Telematics (IMT Teno API: userId + password + accountAlias -> x-session-token)
+    HtmlFormPost = 6         // HTML-Formular-POST mit Session-Cookie (z. B. TRANSWAGGON WOPS twa.portal.Home.cls)
 };
 
 struct Link2RailConfig {
@@ -49,10 +51,12 @@ struct Link2RailConfig {
     // Anmeldedaten
     QString username;
     QString password;
-    QString clientId;
+    QString clientId;                 // DB-Client-Id / OAuth Client-ID / IMT accountAlias
     QString clientSecret;
     QString apiKey;
-    QString manualBearerToken;
+    QString manualBearerToken;        // Direkter Bearer-Token oder x-session-token
+    QString manualCookieHeader;       // Direkter Cookie-Header (z. B. aus Browser-Session / cURL)
+    QString sessionTokenHeaderName;   // Optionaler Header-Name für Session-Token (z. B. "x-session-token")
     bool rememberSettings = true;
     bool rememberPassword = false;
 
@@ -141,6 +145,11 @@ public:
     static Link2RailConfig loadSavedConfig(TelematicsProviderId id = TelematicsProviderId::Link2Rail);
     static void saveConfig(const Link2RailConfig &cfg);
 
+    // Browser-Session / "Als cURL kopieren" / Bearer-Token / Cookie Parser
+    static bool parseCurlOrTokenText(const QString &inputText,
+                                     Link2RailConfig &inOutConfig,
+                                     QString *outSummary = nullptr);
+
     TelematicsProviderId providerId() const { return m_providerId; }
     TelematicsProviderInfo info() const { return providerInfo(m_providerId); }
 
@@ -162,6 +171,8 @@ public:
     void login(const Link2RailConfig &cfg);
     void logout();
     void fetchAllLiveData();
+    void probeConnection(const Link2RailConfig &cfg);
+    bool applyFromCurlOrToken(const QString &inputText, QString *outSummary = nullptr);
 
     // Lokaler Import / Export (JSON, GeoJSON, XML & CSV)
     bool importFromFile(const QString &filePath, QString *outError = nullptr);
@@ -197,10 +208,12 @@ signals:
     void liveDataUpdated(const QVector<Link2RailWagonRecord> &records, const QString &summary);
     void apiError(const QString &errorMessage);
     void protocolLogAppended(const QString &logEntry);
+    void connectionTestFinished(bool reachable, const QString &diagnosticReport);
 
 private slots:
     void onLoginReplyFinished(QNetworkReply *reply);
     void onDataReplyFinished(QNetworkReply *reply);
+    void onProbeReplyFinished(QNetworkReply *reply);
     void onTokenRefreshTimer();
 
 private:

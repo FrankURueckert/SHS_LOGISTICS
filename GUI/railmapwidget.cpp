@@ -83,16 +83,19 @@ RailMapWidget::RailMapWidget(QWidget *parent)
 
     initGeographyAndTracks();
     initSourcesAndSinks();
-    // Reiner link2rail Live-Betrieb: Keine simulierten Demo-Züge beim Start.
-    m_trains.clear();
-    m_cargoOrders.clear();
-    m_selectedTrainIdx = -1;
+    initDefaultTrainsAndCargo();
+    updateAllTrainGeometries();
+
+    m_operatingMode = AppOperatingMode::Simulation;
+    m_selectedTrainIdx = m_trains.isEmpty() ? -1 : 0;
     m_selectedWagonIdx = -1;
-    m_simRunning = false;
+    m_simRunning = true;
+    m_simWasRunningBackup = true;
 
     m_simTimer = new QTimer(this);
     m_simTimer->setInterval(33);
     connect(m_simTimer, &QTimer::timeout, this, &RailMapWidget::onSimTimerTick);
+    m_simTimer->start();
 
     m_cameraAnimTimer = new QTimer(this);
     m_cameraAnimTimer->setInterval(16);
@@ -1549,13 +1552,16 @@ void RailMapWidget::updateAllTrainGeometries()
 
 void RailMapWidget::onSimTimerTick()
 {
-    if (m_simRunning) {
+    if (m_operatingMode == AppOperatingMode::Simulation && m_simRunning) {
         stepSimulation(0.033);
     }
 }
 
 void RailMapWidget::stepSimulation(double dtSeconds)
 {
+    if (m_operatingMode != AppOperatingMode::Simulation) {
+        return;
+    }
     bool stateOrStockChanged = false;
 
     // Kontinuierliche Stahl-Nachproduktion an den Quellen (Hochöfen, Strangguss, Walzwerke)
@@ -1861,7 +1867,93 @@ void RailMapWidget::setExaggerateWagonSize(bool exaggerate)
     update();
 }
 
-void RailMapWidget::setSimulationRunning(bool running) { m_simRunning = running; update(); }
+void RailMapWidget::setOperatingMode(AppOperatingMode mode)
+{
+    if (mode == m_operatingMode) {
+        return;
+    }
+
+    if (mode == AppOperatingMode::LiveGps) {
+        // Aktuellen Simulationszustand verlustfrei sichern
+        m_simTrainsBackup = m_trains;
+        m_simCargoOrdersBackup = m_cargoOrders;
+        m_simSelectedTrainIdxBackup = m_selectedTrainIdx;
+        m_simSelectedWagonIdxBackup = m_selectedWagonIdx;
+        m_simWasRunningBackup = m_simRunning;
+
+        if (m_simTimer) {
+            m_simTimer->stop();
+        }
+        m_simRunning = false;
+
+        m_operatingMode = AppOperatingMode::LiveGps;
+        m_trains = m_liveTrainsBackup;
+        m_cargoOrders.clear();
+        m_selectedTrainIdx = (m_liveSelectedTrainIdxBackup >= 0 && m_liveSelectedTrainIdxBackup < m_trains.size())
+                                 ? m_liveSelectedTrainIdxBackup
+                                 : (m_trains.isEmpty() ? -1 : 0);
+        m_selectedWagonIdx = (m_selectedTrainIdx >= 0 && m_liveSelectedWagonIdxBackup >= 0 &&
+                              m_liveSelectedWagonIdxBackup < m_trains[m_selectedTrainIdx].wagons.size())
+                                 ? m_liveSelectedWagonIdxBackup
+                                 : (m_selectedTrainIdx >= 0 && !m_trains[m_selectedTrainIdx].wagons.isEmpty() ? 0 : -1);
+
+        emit statusMessage(QStringLiteral("📡 Live-GPS-Modus (6 Telematik-Portale) aktiviert – Simulationsstand bleibt gespeichert."));
+    } else {
+        // Aktuellen Live-GPS-Stand sichern
+        m_liveTrainsBackup = m_trains;
+        m_liveSelectedTrainIdxBackup = m_selectedTrainIdx;
+        m_liveSelectedWagonIdxBackup = m_selectedWagonIdx;
+
+        m_operatingMode = AppOperatingMode::Simulation;
+        if (m_simTrainsBackup.isEmpty()) {
+            initDefaultTrainsAndCargo();
+        } else {
+            m_trains = m_simTrainsBackup;
+            m_cargoOrders = m_simCargoOrdersBackup;
+        }
+        m_selectedTrainIdx = (m_simSelectedTrainIdxBackup >= 0 && m_simSelectedTrainIdxBackup < m_trains.size())
+                                 ? m_simSelectedTrainIdxBackup
+                                 : (m_trains.isEmpty() ? -1 : 0);
+        m_selectedWagonIdx = (m_selectedTrainIdx >= 0 && m_simSelectedWagonIdxBackup >= -1 &&
+                              m_simSelectedWagonIdxBackup < m_trains[m_selectedTrainIdx].wagons.size())
+                                 ? m_simSelectedWagonIdxBackup
+                                 : -1;
+
+        m_simRunning = m_simWasRunningBackup;
+        if (m_simRunning && m_simTimer) {
+            m_simTimer->start();
+        }
+        if (m_colorMode == WagonColorMode::ByTelematicsProvider) {
+            m_colorMode = WagonColorMode::ByTypeAndAxles;
+        }
+        updateAllTrainGeometries();
+        emit statusMessage(QStringLiteral("🎮 Simulationsmodus (Spiel) aktiviert – Züge, Quellen/Senken & Lok-Pool laufen weiter."));
+    }
+
+    emit operatingModeChanged(m_operatingMode);
+    emit trainsUpdated();
+    emit cargoAndNodesUpdated();
+    emit selectionChanged(m_selectedTrainIdx, m_selectedWagonIdx);
+    update();
+}
+
+void RailMapWidget::setSimulationRunning(bool running)
+{
+    if (m_operatingMode != AppOperatingMode::Simulation) {
+        m_simWasRunningBackup = running;
+        return;
+    }
+    m_simRunning = running;
+    m_simWasRunningBackup = running;
+    if (m_simTimer) {
+        if (m_simRunning) {
+            if (!m_simTimer->isActive()) m_simTimer->start();
+        } else {
+            m_simTimer->stop();
+        }
+    }
+    update();
+}
 void RailMapWidget::setSimulationSpeedMultiplier(double factor) { m_simSpeedFactor = std::clamp(factor, 0.1, 15.0); }
 
 void RailMapWidget::selectTrain(int trainIdx, int wagonIdx, bool centerCamera)
@@ -2390,8 +2482,7 @@ CargoProductType RailMapWidget::classifyCargoFromText(const QString &cargoText, 
 void RailMapWidget::applyLink2RailRecords(const QVector<Link2RailWagonRecord> &records)
 {
     m_lastLink2RailRecords = records;
-    m_trains.clear();
-    m_cargoOrders.clear();
+    QVector<TrainConsist> builtLive;
 
     // Live-Waggon-Zähler an allen Werken/Geofences zurücksetzen
     for (SourceSinkNode &node : m_sourceSinkNodes) {
@@ -2417,9 +2508,9 @@ void RailMapWidget::applyLink2RailRecords(const QVector<Link2RailWagonRecord> &r
             TrainConsist tr;
             tr.id = hasGroup ? groupKey : rec.evn;
             tr.name = hasGroup
-                          ? QStringLiteral("link2rail Zug/Sendung %1").arg(groupKey)
-                          : QStringLiteral("link2rail Waggon %1").arg(rec.evn);
-            tr.locoName = hasGroup ? QStringLiteral("DB Cargo link2rail") : QString();
+                          ? QStringLiteral("%1 Zug/Sendung %2").arg(rec.providerName, groupKey)
+                          : QStringLiteral("%1 Waggon %2").arg(rec.providerName, rec.evn);
+            tr.locoName = hasGroup ? rec.providerName : QString();
             tr.hasLocomotive = hasGroup && (rec.speedKmh > 0.5 || rec.statusText.contains(QStringLiteral("Transit"), Qt::CaseInsensitive));
             tr.isLiveGpsGroup = true;
             tr.isSingleWagon = !hasGroup;
@@ -2433,14 +2524,14 @@ void RailMapWidget::applyLink2RailRecords(const QVector<Link2RailWagonRecord> &r
             tr.lastUpdateIso = rec.timestampIso;
             tr.currentLocationName = !rec.geofenceSite.isEmpty() ? rec.geofenceSite : rec.locationName;
             tr.opState = (rec.speedKmh > 0.5) ? TrainOperationState::MovingLoadedToSink : TrainOperationState::ParkedWithoutLoco;
-            m_trains.append(tr);
-            tIdx = m_trains.size() - 1;
+            builtLive.append(tr);
+            tIdx = builtLive.size() - 1;
             if (hasGroup) {
                 groupToIndex.insert(groupKey, tIdx);
             }
         }
 
-        TrainConsist &consist = m_trains[tIdx];
+        TrainConsist &consist = builtLive[tIdx];
 
         WagonData w;
         w.positionIndex = consist.wagons.size() + 1;
@@ -2454,7 +2545,7 @@ void RailMapWidget::applyLink2RailRecords(const QVector<Link2RailWagonRecord> &r
         w.assignedWeightTons = rec.weightTons;
         w.cargoDescription = !rec.cargoDescription.isEmpty()
                                  ? rec.cargoDescription
-                                 : (rec.isLoadedKnown && !rec.isLoaded ? QStringLiteral("Leerwagen") : QStringLiteral("link2rail Gut"));
+                                 : (rec.isLoadedKnown && !rec.isLoaded ? QStringLiteral("Leerwagen") : (rec.providerName + QStringLiteral(" Gut")));
 
         w.providerKey = rec.providerKey;
         w.providerName = rec.providerName;
@@ -2520,7 +2611,7 @@ void RailMapWidget::applyLink2RailRecords(const QVector<Link2RailWagonRecord> &r
             }
         }
 
-        // Geofence-Zuordnung zu den 10 SHS-Werken/Anlagen (Radius <= 900 m oder Namens-/DS100-Match)
+        // Geofence-Zuordnung zu den 10 SHS-Werken/Anlagen (Radius <= 900 m)
         if (w.hasValidGps) {
             int nearestNodeIdx = -1;
             double nearestNodeDist = 900.0;
@@ -2556,9 +2647,8 @@ void RailMapWidget::applyLink2RailRecords(const QVector<Link2RailWagonRecord> &r
         consist.wagons.append(w);
     }
 
-    // Bei Mehrwagen-Verbänden mit gleicher GPS-Koordinate (z. B. Zug-Event) Waggons leicht auffächern,
-    // damit alle Einzelwaggons anklickbar und sichtbar bleiben
-    for (TrainConsist &consist : m_trains) {
+    // Bei Mehrwagen-Verbänden mit gleicher GPS-Koordinate Waggons leicht auffächern
+    for (TrainConsist &consist : builtLive) {
         if (consist.wagons.size() >= 2) {
             bool allSameGps = true;
             const double lat0 = consist.wagons[0].currentLat;
@@ -2582,15 +2672,22 @@ void RailMapWidget::applyLink2RailRecords(const QVector<Link2RailWagonRecord> &r
         }
     }
 
-    if (m_trains.isEmpty()) {
-        m_selectedTrainIdx = -1;
-        m_selectedWagonIdx = -1;
+    m_liveTrainsBackup = builtLive;
+    if (builtLive.isEmpty()) {
+        m_liveSelectedTrainIdxBackup = -1;
+        m_liveSelectedWagonIdxBackup = -1;
     } else {
-        m_selectedTrainIdx = std::clamp(m_selectedTrainIdx, 0, static_cast<int>(m_trains.size()) - 1);
-        m_selectedWagonIdx = 0;
+        m_liveSelectedTrainIdxBackup = std::clamp(m_liveSelectedTrainIdxBackup, 0, static_cast<int>(builtLive.size()) - 1);
+        m_liveSelectedWagonIdxBackup = 0;
     }
 
-    emit trainsUpdated();
+    if (m_operatingMode == AppOperatingMode::LiveGps) {
+        m_trains = builtLive;
+        m_selectedTrainIdx = m_liveSelectedTrainIdxBackup;
+        m_selectedWagonIdx = m_liveSelectedWagonIdxBackup;
+        emit trainsUpdated();
+    }
+
     emit cargoAndNodesUpdated();
     update();
 }
@@ -2598,14 +2695,18 @@ void RailMapWidget::applyLink2RailRecords(const QVector<Link2RailWagonRecord> &r
 void RailMapWidget::clearLiveWagons()
 {
     m_lastLink2RailRecords.clear();
-    m_trains.clear();
-    m_cargoOrders.clear();
+    m_liveTrainsBackup.clear();
+    m_liveSelectedTrainIdxBackup = -1;
+    m_liveSelectedWagonIdxBackup = -1;
     for (SourceSinkNode &node : m_sourceSinkNodes) {
         node.liveWagonCount = 0;
     }
-    m_selectedTrainIdx = -1;
-    m_selectedWagonIdx = -1;
-    emit trainsUpdated();
+    if (m_operatingMode == AppOperatingMode::LiveGps) {
+        m_trains.clear();
+        m_selectedTrainIdx = -1;
+        m_selectedWagonIdx = -1;
+        emit trainsUpdated();
+    }
     emit cargoAndNodesUpdated();
     update();
 }
@@ -2659,7 +2760,8 @@ void RailMapWidget::fitAllLiveWagons(bool animate)
     double minLon = 180.0, maxLon = -180.0;
     int gpsCount = 0;
 
-    for (const TrainConsist &tr : m_trains) {
+    const auto &src = liveTrains();
+    for (const TrainConsist &tr : src) {
         for (const WagonData &w : tr.wagons) {
             if (!w.hasValidGps) continue;
             minLat = std::min(minLat, w.currentLat);
@@ -2687,7 +2789,7 @@ void RailMapWidget::fitAllLiveWagons(bool animate)
         targetZoom = std::clamp(std::min(zLon, zLat), 5.5, 16.0);
     }
 
-    m_activeSiteName = QStringLiteral("Alle link2rail Live-Waggons (%1 mit GPS)").arg(gpsCount);
+    m_activeSiteName = QStringLiteral("Alle Live-GPS-Waggons (%1 mit GPS)").arg(gpsCount);
     if (!animate) {
         m_centerLat = targetLat;
         m_centerLon = targetLon;
@@ -2704,13 +2806,13 @@ void RailMapWidget::fitAllLiveWagons(bool animate)
     m_animTargetZoom = targetZoom;
     m_animProgress = 0.0;
     m_cameraAnimTimer->start();
-    emit statusMessage(QStringLiteral("Kamera auf alle %1 link2rail GPS-Waggons ausgerichtet.").arg(gpsCount));
+    emit statusMessage(QStringLiteral("Kamera auf alle %1 Live-GPS-Waggons ausgerichtet.").arg(gpsCount));
 }
 
 int RailMapWidget::totalLiveWagonsCount() const
 {
     int count = 0;
-    for (const TrainConsist &tr : m_trains) {
+    for (const TrainConsist &tr : liveTrains()) {
         count += tr.wagons.size();
     }
     return count;
@@ -2719,7 +2821,7 @@ int RailMapWidget::totalLiveWagonsCount() const
 int RailMapWidget::totalLiveGpsWagonsCount() const
 {
     int count = 0;
-    for (const TrainConsist &tr : m_trains) {
+    for (const TrainConsist &tr : liveTrains()) {
         for (const WagonData &w : tr.wagons) {
             if (w.hasValidGps) count++;
         }
@@ -3162,18 +3264,35 @@ void RailMapWidget::drawSourcesAndSinks(QPainter &painter)
                              Qt::AlignLeft | Qt::AlignVCenter,
                              QString("⬇️ Abladung: %1").arg(n.consumedGoods));
 
-            // Live-Waggon-Status im Werk / Geofence
             const QRectF barBg(card.left() + 6, card.top() + 42, card.width() - 12, 12);
-            painter.setBrush(n.liveWagonCount > 0 ? QColor("#065F46") : QColor("#1E293B"));
-            painter.setPen(QPen(n.liveWagonCount > 0 ? QColor("#34D399") : QColor("#475569"), 1.0));
-            painter.drawRoundedRect(barBg, 3, 3);
-
-            painter.setPen(n.liveWagonCount > 0 ? QColor("#A7F3D0") : QColor("#94A3B8"));
-            painter.drawText(barBg.adjusted(4, 0, -4, 0),
-                             Qt::AlignCenter,
-                             n.liveWagonCount > 0
-                                 ? QString("📡 link2rail LIVE: %1 Waggon(s) im Bereich").arg(n.liveWagonCount)
-                                 : QStringLiteral("📡 link2rail Geofence aktiv (0 Waggons)"));
+            if (m_operatingMode == AppOperatingMode::Simulation) {
+                // Simulations-Lagerbestand & Umschlag (Aufnahme / Abladung)
+                const double ratio = std::clamp(n.currentStockTons / std::max(1.0, n.maxCapacityTons), 0.0, 1.0);
+                painter.setBrush(QColor("#1E293B"));
+                painter.setPen(QPen(QColor("#475569"), 1.0));
+                painter.drawRoundedRect(barBg, 3, 3);
+                painter.setBrush(activeLoadingHere ? QColor("#22C55E")
+                                 : (activeUnloadingHere ? QColor("#38BDF8") : n.badgeColor));
+                painter.setPen(Qt::NoPen);
+                painter.drawRoundedRect(QRectF(barBg.left() + 1, barBg.top() + 1,
+                                               (barBg.width() - 2) * ratio, barBg.height() - 2), 2, 2);
+                painter.setPen(Qt::white);
+                painter.drawText(barBg.adjusted(4, 0, -4, 0), Qt::AlignCenter,
+                                 QString("Bestand: %1 t | ⬆️%2t ⬇️%3t")
+                                     .arg(n.currentStockTons, 0, 'f', 0)
+                                     .arg(n.totalLoadedTons, 0, 'f', 0)
+                                     .arg(n.totalUnloadedTons, 0, 'f', 0));
+            } else {
+                // Live-Waggon-Status im Werk / Geofence (Multi-Telematik)
+                painter.setBrush(n.liveWagonCount > 0 ? QColor("#065F46") : QColor("#1E293B"));
+                painter.setPen(QPen(n.liveWagonCount > 0 ? QColor("#34D399") : QColor("#475569"), 1.0));
+                painter.drawRoundedRect(barBg, 3, 3);
+                painter.setPen(n.liveWagonCount > 0 ? QColor("#A7F3D0") : QColor("#94A3B8"));
+                painter.drawText(barBg.adjusted(4, 0, -4, 0), Qt::AlignCenter,
+                                 n.liveWagonCount > 0
+                                     ? QString("📡 LIVE-GPS: %1 Waggon(s) im Werkbereich").arg(n.liveWagonCount)
+                                     : QStringLiteral("📡 Multi-Telematik Geofence aktiv (0 Waggons)"));
+            }
         }
     }
 
@@ -3733,50 +3852,82 @@ void RailMapWidget::drawHudOverlay(QPainter &painter)
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    const QRectF topHud(14, 14, 510, 88);
+    const bool isSim = (m_operatingMode == AppOperatingMode::Simulation);
+    const QColor modeAccent = isSim ? QColor("#EF7D00")
+                                    : (m_activeProvidersCount > 0 ? QColor("#10B981") : QColor("#0D9488"));
+
+    const double leftHudW = std::clamp(width() - 392.0, 390.0, 485.0);
+    const QRectF topHud(14, 14, leftHudW, 88);
     painter.setBrush(QColor(30, 41, 59, 236));
-    painter.setPen(QPen(m_l2rAuthenticated ? QColor("#10B981") : QColor("#EF7D00"), 1.6));
+    painter.setPen(QPen(modeAccent, 1.6));
     painter.drawRoundedRect(topHud, 6, 6);
 
-    painter.setBrush(m_l2rAuthenticated ? QColor("#10B981") : QColor("#EF7D00"));
+    painter.setBrush(modeAccent);
     painter.setPen(Qt::NoPen);
     painter.drawRoundedRect(QRectF(14, 14, 6, 88), 3, 3);
 
+    const double hudTextW = leftHudW - 22.0;
     QFont titleFont = painter.font();
     titleFont.setPointSize(9);
     titleFont.setBold(true);
     painter.setFont(titleFont);
     painter.setPen(QColor("#FBD50E"));
-    painter.drawText(QRectF(28, 18, 488, 20), Qt::AlignLeft | Qt::AlignVCenter,
-                     QStringLiteral("📍 ") + m_activeSiteName);
+    painter.drawText(QRectF(28, 18, hudTextW, 20), Qt::AlignLeft | Qt::AlignVCenter,
+                     QFontMetrics(titleFont).elidedText(
+                         (isSim ? QStringLiteral("🎮 SIMULATIONSMODUS | 📍 ") : QStringLiteral("📡 LIVE-GPS-MODUS | 📍 ")) + m_activeSiteName,
+                         Qt::ElideRight, static_cast<int>(hudTextW)));
 
     QFont subFont = painter.font();
     subFont.setPointSize(8);
     subFont.setBold(false);
     painter.setFont(subFont);
-    const QString connStatus = (m_activeProvidersCount > 0)
-                                   ? QString("🟢 Telematik-Dienste aktiv (%1/%2): %3  |  Sync: %4")
-                                         .arg(m_activeProvidersCount).arg(m_totalProvidersCount)
-                                         .arg(m_activeProvidersSummary, m_l2rLastSync.isEmpty() ? QStringLiteral("aktiv") : m_l2rLastSync)
-                                   : QStringLiteral("🔴 Kein Telematik-Dienst angemeldet (Tab '🔐 Dienste & Logins' öffnen)");
-    painter.setPen(m_activeProvidersCount > 0 ? QColor("#86EFAC") : QColor("#FDE047"));
-    painter.drawText(QRectF(28, 40, 488, 18), Qt::AlignLeft | Qt::AlignVCenter, connStatus);
 
-    painter.setPen(QColor("#E2E8F0"));
-    painter.drawText(QRectF(28, 60, 488, 18), Qt::AlignLeft | Qt::AlignVCenter,
-                     QString("Gesamt Live-Waggons: %1 (%2 GPS) | Verbände: %3 | Gleis-Snapping: %4 | Zoom: %5x")
-                         .arg(totalLiveWagonsCount())
-                         .arg(totalLiveGpsWagonsCount())
-                         .arg(m_trains.size())
-                         .arg(m_snapLiveGpsToTracks ? QStringLiteral("AN") : QStringLiteral("AUS"))
-                         .arg(m_zoom, 0, 'f', 1));
+    if (isSim) {
+        int activeLoco = 0, parkedNoLoco = 0, totalWags = 0;
+        for (const TrainConsist &tr : m_trains) {
+            if (tr.hasLocomotive) activeLoco++;
+            else parkedNoLoco++;
+            totalWags += tr.wagons.size();
+        }
+        painter.setPen(QColor("#FDBA74"));
+        painter.drawText(QRectF(28, 40, hudTextW, 18), Qt::AlignLeft | Qt::AlignVCenter,
+                         QString("Züge mit Lok: %1  |  🅿️ Gelagert: %2  |  Lok-Pool: %3 frei / %4 gesamt")
+                             .arg(activeLoco).arg(parkedNoLoco).arg(freeLocomotivesCount()).arg(m_totalLocosInPool));
+
+        painter.setPen(QColor("#E2E8F0"));
+        painter.drawText(QRectF(28, 60, hudTextW, 18), Qt::AlignLeft | Qt::AlignVCenter,
+                         QString("Waggons: %1  |  Tempo: %2x  |  Status: %3  |  Zoom: %4x")
+                             .arg(totalWags)
+                             .arg(m_simSpeedFactor, 0, 'f', 1)
+                             .arg(m_simRunning ? QStringLiteral("▶ LÄUFT") : QStringLiteral("⏸ PAUSE"))
+                             .arg(m_zoom, 0, 'f', 1));
+    } else {
+        const QString connStatus = (m_activeProvidersCount > 0)
+                                       ? QString("🟢 Dienste aktiv (%1/%2): %3  |  Sync: %4")
+                                             .arg(m_activeProvidersCount).arg(m_totalProvidersCount)
+                                             .arg(m_activeProvidersSummary, m_l2rLastSync.isEmpty() ? QStringLiteral("aktiv") : m_l2rLastSync)
+                                       : QStringLiteral("🔴 Kein Dienst angemeldet (Tab '🔐 Dienste & Logins' öffnen)");
+        painter.setPen(m_activeProvidersCount > 0 ? QColor("#86EFAC") : QColor("#FDE047"));
+        painter.drawText(QRectF(28, 40, hudTextW, 18), Qt::AlignLeft | Qt::AlignVCenter,
+                         QFontMetrics(subFont).elidedText(connStatus, Qt::ElideRight, static_cast<int>(hudTextW)));
+
+        painter.setPen(QColor("#E2E8F0"));
+        painter.drawText(QRectF(28, 60, hudTextW, 18), Qt::AlignLeft | Qt::AlignVCenter,
+                         QString("Live-Waggons: %1 (%2 GPS) | Verbände: %3 | Snap: %4 | Zoom: %5x")
+                             .arg(totalLiveWagonsCount())
+                             .arg(totalLiveGpsWagonsCount())
+                             .arg(m_trains.size())
+                             .arg(m_snapLiveGpsToTracks ? QStringLiteral("AN") : QStringLiteral("AUS"))
+                             .arg(m_zoom, 0, 'f', 1));
+    }
+
     painter.setPen(QColor("#94A3B8"));
-    painter.drawText(QRectF(28, 79, 488, 16), Qt::AlignLeft | Qt::AlignVCenter,
-                     QString("Mitte: %1° N, %2° E | Mausrad: Zoom | Ziehen: Bewegen | Klick: Waggon-Details")
+    painter.drawText(QRectF(28, 79, hudTextW, 16), Qt::AlignLeft | Qt::AlignVCenter,
+                     QString("Mitte: %1° N, %2° E | Mausrad: Zoom | Ziehen: Karte | Klick: Auswahl")
                          .arg(m_centerLat, 0, 'f', 4).arg(m_centerLon, 0, 'f', 4));
 
     // Unten-Links: Dynamische Farblegende (Waggon-Bauart ODER alle 6 Telematik-Dienste)
-    if (m_colorMode == WagonColorMode::ByTelematicsProvider) {
+    if (!isSim && m_colorMode == WagonColorMode::ByTelematicsProvider) {
         const auto providers = Link2RailClient::allProviders();
         const QRectF legendRect(14, height() - 166, 375, 152);
         painter.setBrush(QColor(30, 41, 59, 235));
@@ -3832,7 +3983,7 @@ void RailMapWidget::drawHudOverlay(QPainter &painter)
         }
     }
 
-    // Oben-Rechts: Details zum aktuell ausgewählten Live-Waggon / Verband
+    // Oben-Rechts: Details zum aktuell ausgewählten Zug / Waggon (Simulation ODER Live-GPS)
     if (m_selectedTrainIdx >= 0 && m_selectedTrainIdx < m_trains.size()) {
         const TrainConsist &tr = m_trains[m_selectedTrainIdx];
         const int wIdx = (m_selectedWagonIdx >= 0 && m_selectedWagonIdx < tr.wagons.size())
@@ -3840,54 +3991,102 @@ void RailMapWidget::drawHudOverlay(QPainter &painter)
                              : (tr.wagons.isEmpty() ? -1 : 0);
         const QRectF selBox(width() - 375, 14, 361, 146);
         painter.setBrush(QColor(15, 23, 42, 238));
-        painter.setPen(QPen(tr.providerColor.isValid() ? tr.providerColor : QColor("#38BDF8"), 1.8));
+        const QColor boxBorder = isSim
+                                     ? (tr.hasLocomotive ? QColor("#EF7D00") : QColor("#C084FC"))
+                                     : (tr.providerColor.isValid() ? tr.providerColor : QColor("#38BDF8"));
+        painter.setPen(QPen(boxBorder, 1.8));
         painter.drawRoundedRect(selBox, 6, 6);
 
         titleFont.setPointSize(9);
         painter.setFont(titleFont);
         painter.setPen(QColor("#FBD50E"));
-        painter.drawText(QRectF(width() - 363, 20, 338, 20),
-                         QString("📡 [%1] %2 (%3 Wg.)").arg(tr.providerName, tr.id).arg(tr.wagons.size()));
 
-        subFont.setPointSize(8);
-        painter.setFont(subFont);
-        if (wIdx >= 0) {
-            const WagonData &w = tr.wagons[wIdx];
-            painter.setPen(colorForWagon(w.category, m_colorMode).lighter(135));
+        if (isSim) {
+            double totalPayload = 0.0;
+            int totalAxles = 0;
+            for (const WagonData &w : tr.wagons) {
+                totalPayload += w.weightTons;
+                totalAxles += w.axleCount;
+            }
+            painter.drawText(QRectF(width() - 363, 20, 338, 20),
+                             QString("%1 %2 (%3 Wg. | %4A | %5 t)")
+                                 .arg(tr.hasLocomotive ? QStringLiteral("🚂") : QStringLiteral("🅿️"), tr.id)
+                                 .arg(tr.wagons.size()).arg(totalAxles).arg(totalPayload, 0, 'f', 0));
+
+            subFont.setPointSize(8);
+            painter.setFont(subFont);
+            painter.setPen(tr.hasLocomotive ? QColor("#86EFAC") : QColor("#E9D5FF"));
             painter.drawText(QRectF(width() - 363, 42, 338, 17),
-                             QString("UIC/EVN: %1  |  Bauart: %2 (%3A)")
-                                 .arg(w.uicNumber, w.wagonTypeRaw).arg(w.axleCount));
-
-            painter.setPen(QColor("#86EFAC"));
-            const QString evTxt = !w.lastEventType.isEmpty()
-                                      ? QString("%1 (%2)").arg(w.liveStatusText, w.lastEventType)
-                                      : (w.liveStatusText.isEmpty() ? QStringLiteral("Aktiv (GPS)") : w.liveStatusText);
-            painter.drawText(QRectF(width() - 363, 60, 338, 17),
-                             QString("Status: %1  |  %2 km/h  |  Stand: %3 min")
-                                 .arg(evTxt).arg(w.speedKmh, 0, 'f', 0).arg(w.standingTimeMinutes));
-
-            painter.setPen(QColor("#E2E8F0"));
-            const QString loc = !w.geofenceSite.isEmpty() ? w.geofenceSite
-                                                          : (!w.locationName.isEmpty() ? w.locationName : QStringLiteral("Freie Strecke"));
-            painter.drawText(QRectF(width() - 363, 78, 338, 17),
-                             QString("Ort/Geofence: %1 %2").arg(loc, w.locationCode.isEmpty() ? QString() : QString("[%1]").arg(w.locationCode)));
-
-            painter.setPen(QColor("#FDE047"));
-            const QString routeTxt = (!w.originName.isEmpty() || !w.destinationName.isEmpty())
-                                         ? QString("Route: %1 -> %2").arg(w.originName, w.destinationName)
-                                         : QString("Gut: %1 (%2 t)").arg(w.cargoDescription).arg(w.weightTons, 0, 'f', 1);
-            painter.drawText(QRectF(width() - 363, 96, 338, 17), routeTxt);
+                             QString("Lok: %1").arg(tr.locoName));
 
             painter.setPen(QColor("#7DD3FC"));
-            painter.drawText(QRectF(width() - 363, 114, 338, 17),
-                             QString("GPS: %1° N, %2° E (%3)")
-                                 .arg(w.rawGpsLat, 0, 'f', 5).arg(w.rawGpsLon, 0, 'f', 5)
-                                 .arg(w.isSnappedToTrack ? QStringLiteral("Gleis-Snap") : QStringLiteral("Roh-GPS")));
+            painter.drawText(QRectF(width() - 363, 60, 338, 17),
+                             QString("Zyklus: %1").arg(operationStateText(tr)));
 
-            painter.setPen(QColor("#94A3B8"));
-            painter.drawText(QRectF(width() - 363, 132, 338, 17),
-                             QString("Zeitstempel: %1 | Quelle: %2")
-                                 .arg(w.timestampIso.isEmpty() ? QStringLiteral("-") : w.timestampIso, w.sourceEndpoint));
+            painter.setPen(QColor("#E2E8F0"));
+            painter.drawText(QRectF(width() - 363, 78, 338, 17),
+                             QString("Route: %1  ->  %2  |  Gleis: %3").arg(tr.sourceNodeId, tr.sinkNodeId, tr.trackId));
+
+            if (wIdx >= 0) {
+                const WagonData &w = tr.wagons[wIdx];
+                painter.setPen(colorForWagon(w.category, m_colorMode).lighter(135));
+                painter.drawText(QRectF(width() - 363, 98, 338, 17),
+                                 QString("Waggon #%1: %2  |  UIC: %3")
+                                     .arg(w.positionIndex).arg(shortCodeForWagon(w.category), w.uicNumber));
+                painter.setPen(QColor("#FDE047"));
+                painter.drawText(QRectF(width() - 363, 116, 338, 17),
+                                 QString("Gut: %1 (%2 t)  |  Umläufe: %3")
+                                     .arg(productShortName(w.productType)).arg(w.weightTons, 0, 'f', 1).arg(tr.completedDeliveries));
+                painter.setPen(QColor("#94A3B8"));
+                painter.drawText(QRectF(width() - 363, 134, 338, 17),
+                                 QString("GPS: %1° N, %2° E  |  v: %3 km/h")
+                                     .arg(w.currentLat, 0, 'f', 5).arg(w.currentLon, 0, 'f', 5)
+                                     .arg(tr.hasLocomotive ? tr.speedKmh : 0.0, 0, 'f', 0));
+            }
+        } else {
+            painter.drawText(QRectF(width() - 363, 20, 338, 20),
+                             QString("📡 [%1] %2 (%3 Wg.)").arg(tr.providerName, tr.id).arg(tr.wagons.size()));
+
+            subFont.setPointSize(8);
+            painter.setFont(subFont);
+            if (wIdx >= 0) {
+                const WagonData &w = tr.wagons[wIdx];
+                painter.setPen(colorForWagon(w.category, m_colorMode).lighter(135));
+                painter.drawText(QRectF(width() - 363, 42, 338, 17),
+                                 QString("UIC/EVN: %1  |  Bauart: %2 (%3A)")
+                                     .arg(w.uicNumber, w.wagonTypeRaw).arg(w.axleCount));
+
+                painter.setPen(QColor("#86EFAC"));
+                const QString evTxt = !w.lastEventType.isEmpty()
+                                          ? QString("%1 (%2)").arg(w.liveStatusText, w.lastEventType)
+                                          : (w.liveStatusText.isEmpty() ? QStringLiteral("Aktiv (GPS)") : w.liveStatusText);
+                painter.drawText(QRectF(width() - 363, 60, 338, 17),
+                                 QString("Status: %1  |  %2 km/h  |  Stand: %3 min")
+                                     .arg(evTxt).arg(w.speedKmh, 0, 'f', 0).arg(w.standingTimeMinutes));
+
+                painter.setPen(QColor("#E2E8F0"));
+                const QString loc = !w.geofenceSite.isEmpty() ? w.geofenceSite
+                                                              : (!w.locationName.isEmpty() ? w.locationName : QStringLiteral("Freie Strecke"));
+                painter.drawText(QRectF(width() - 363, 78, 338, 17),
+                                 QString("Ort/Geofence: %1 %2").arg(loc, w.locationCode.isEmpty() ? QString() : QString("[%1]").arg(w.locationCode)));
+
+                painter.setPen(QColor("#FDE047"));
+                const QString routeTxt = (!w.originName.isEmpty() || !w.destinationName.isEmpty())
+                                             ? QString("Route: %1 -> %2").arg(w.originName, w.destinationName)
+                                             : QString("Gut: %1 (%2 t)").arg(w.cargoDescription).arg(w.weightTons, 0, 'f', 1);
+                painter.drawText(QRectF(width() - 363, 96, 338, 17), routeTxt);
+
+                painter.setPen(QColor("#7DD3FC"));
+                painter.drawText(QRectF(width() - 363, 114, 338, 17),
+                                 QString("GPS: %1° N, %2° E (%3)")
+                                     .arg(w.rawGpsLat, 0, 'f', 5).arg(w.rawGpsLon, 0, 'f', 5)
+                                     .arg(w.isSnappedToTrack ? QStringLiteral("Gleis-Snap") : QStringLiteral("Roh-GPS")));
+
+                painter.setPen(QColor("#94A3B8"));
+                painter.drawText(QRectF(width() - 363, 132, 338, 17),
+                                 QString("Zeitstempel: %1 | Quelle: %2")
+                                     .arg(w.timestampIso.isEmpty() ? QStringLiteral("-") : w.timestampIso, w.sourceEndpoint));
+            }
         }
     }
 
@@ -3955,7 +4154,10 @@ void RailMapWidget::drawMiniOverviewMap(QPainter &painter)
         const double lat = tr.wagons[0].currentLat;
         const double lon = tr.wagons[0].currentLon;
         if (lat < minLat || lat > maxLat || lon < minLon || lon > maxLon) continue;
-        painter.setBrush(tr.isLiveGpsGroup ? QColor("#38BDF8") : QColor("#FBD50E"));
+        const QColor dotCol = tr.isLiveGpsGroup
+                                  ? QColor("#38BDF8")
+                                  : (tr.hasLocomotive ? QColor("#FBD50E") : QColor("#C084FC"));
+        painter.setBrush(dotCol);
         painter.setPen(Qt::NoPen);
         painter.drawEllipse(toMini(lat, lon), 2.8, 2.8);
     }
