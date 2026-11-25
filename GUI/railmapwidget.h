@@ -13,6 +13,9 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QSet>
+#include <QVariantMap>
+
+#include "link2railclient.h"
 
 enum class WagonCategory {
     Samms_6Axle = 0,    // Samms 489/709 (6-Achser Schwerlast-Flachwagen)
@@ -24,7 +27,8 @@ enum class WagonCategory {
 enum class WagonColorMode {
     ByTypeAndAxles = 0,       // Alle 4 Kategorien farblich getrennt (Standard)
     HighlightSammsVsRnsz = 1, // Fokus: Samms vs. Rns-z
-    StrictByAxleCount = 2     // Fokus: 4-Achser vs. 6-Achser
+    StrictByAxleCount = 2,    // Fokus: 4-Achser vs. 6-Achser
+    ByTelematicsProvider = 3  // Färbung nach Telematik-Dienst (link2rail / IMT / DOT / TRANSWAGGON / Innofreight / Wascosa)
 };
 
 enum class MapBackgroundMode {
@@ -94,6 +98,7 @@ struct SourceSinkNode {
     double maxCapacityTons = 1200.0;
     double totalLoadedTons = 0.0;   // Kumulierte Güter-Aufnahme (Beladung auf Waggons)
     double totalUnloadedTons = 0.0; // Kumulierte Güter-Abladung (Entladung von Waggons)
+    int liveWagonCount = 0;         // Anzahl aktuell per link2rail GPS in diesem Werk/Geofence erkannter Waggons
     QColor badgeColor;
 };
 
@@ -145,13 +150,47 @@ struct WagonData {
     double currentLon = 6.8540;
     double headingDeg = 0.0;
     QRectF lastScreenBounds;
+
+    // Live-Telemetriedaten (Multi-Provider: link2rail, IMT, DOT, TRANSWAGGON, Innofreight, Wascosa)
+    QString providerKey = QStringLiteral("link2rail");
+    QString providerName = QStringLiteral("DB link2rail");
+    QColor providerColor = QColor("#0D9488");
+    bool isLiveGps = false;
+    bool hasValidGps = true;
+    bool isSnappedToTrack = false;
+    double rawGpsLat = 0.0;
+    double rawGpsLon = 0.0;
+    double speedKmh = 0.0;
+    QString wagonTypeRaw;
+    QString liveStatusText;
+    QString lastEventType;
+    QString locationName;
+    QString locationCode;
+    QString geofenceSite;
+    int standingTimeMinutes = 0;
+    QString timestampIso;
+    QString originName;
+    QString destinationName;
+    QString etaIso;
+    QString telematicsBoxId;
+    double temperatureC = -9999.0;
+    int batteryPercent = -1;
+    QString sourceEndpoint;
+    QVariantMap rawAttributes;
 };
 
 struct TrainConsist {
     QString id;
     QString name;
     QString locoName;
-    bool hasLocomotive = true; // false = Abgestellte Waggongruppe (wartet auf freie Lok!)
+    bool hasLocomotive = true; // false = Abgestellte Waggongruppe / Einzelwaggon
+    bool isLiveGpsGroup = false; // true = Reale GPS-Daten aus Telematik-Diensten
+    bool isSingleWagon = false;  // true = Einzelwaggon ohne Zugnummer aus Geofence/Telematik
+    QString providerKey = QStringLiteral("link2rail");
+    QString providerName = QStringLiteral("DB link2rail");
+    QColor providerColor = QColor("#0D9488");
+    QString lastUpdateIso;
+    QString currentLocationName;
     QString sourceNodeId;      // Quelle (wo Güter aufgenommen werden)
     QString sinkNodeId;        // Senke (wo Güter abgeladen werden)
     double sourceTrackDistMeters = 220.0; // Gleiskilometer der Güter-Aufnahme (Quelle)
@@ -250,7 +289,23 @@ public:
     void zoomToWagon(int trainIdx, int wagonIdx);
     void zoomToSourceSinkNode(int nodeIdx);
 
-    // Bahn-API & Zufalls-Testpositionierung
+    // Bahn-API & Multi-Provider Live-GPS-Integration
+    void applyLink2RailRecords(const QVector<Link2RailWagonRecord> &records);
+    void clearLiveWagons();
+    void setLink2RailStatus(bool authenticated, const QString &user, const QString &lastSyncStr);
+    void setMultiProviderStatus(int activeProvidersCount, int totalProvidersCount,
+                                const QString &activeNamesSummary, const QString &lastSyncStr);
+    void setProviderVisible(const QString &providerKey, bool visible);
+    bool isProviderVisible(const QString &providerKey) const;
+    void setSnapLiveGpsToTracks(bool enable);
+    bool snapLiveGpsToTracks() const { return m_snapLiveGpsToTracks; }
+    void fitAllLiveWagons(bool animate = true);
+    int totalLiveWagonsCount() const;
+    int totalLiveGpsWagonsCount() const;
+
+    static WagonCategory classifyWagonFromLink2Rail(const QString &typeCode, const QString &evn, int axleCount);
+    static CargoProductType classifyCargoFromText(const QString &cargoText, bool isLoadedKnown, bool isLoaded);
+
     void randomizePositionsOnTracks(bool voelklingenOnly = false);
     QString applySimulatedDbApiPositioning(const QString &endpointUrl, const QString &apiKey);
     void triggerLiveNetworkApiQuery(const QString &endpointUrl, const QString &clientId, const QString &apiKey);
@@ -355,10 +410,21 @@ private:
     bool m_showSourcesAndSinks = true;
     bool m_exaggerateWagonSize = true;
 
-    // Simulation
+    // Simulation (im reinen link2rail Live-Betrieb standardmäßig deaktiviert)
     QTimer *m_simTimer = nullptr;
-    bool m_simRunning = true;
+    bool m_simRunning = false;
     double m_simSpeedFactor = 2.5;
+
+    // Multi-Provider Live-Status & GPS-Optionen
+    bool m_snapLiveGpsToTracks = true;
+    bool m_l2rAuthenticated = false;
+    int m_activeProvidersCount = 0;
+    int m_totalProvidersCount = 6;
+    QString m_activeProvidersSummary;
+    QString m_l2rUser;
+    QString m_l2rLastSync;
+    QSet<QString> m_hiddenProviderKeys;
+    QVector<Link2RailWagonRecord> m_lastLink2RailRecords;
 
     // Lokomotiv-Pool (begrenzte Anzahl an Lokomotiven -> führt zu Waggon-Lagerung bei Engpass)
     int m_totalLocosInPool = 6;

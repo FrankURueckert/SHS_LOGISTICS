@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(SHS_Logistics VERSION 0.8 LANGUAGES CXX)
+project(SHS_Logistics VERSION 0.9 LANGUAGES CXX)
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -19,6 +19,12 @@ set(PROJECT_SOURCES
     mainwindowshslogistics.ui
     railmapwidget.cpp
     railmapwidget.h
+    link2railclient.cpp
+    link2railclient.h
+    link2raillogindialog.cpp
+    link2raillogindialog.h
+    providerloginwidget.cpp
+    providerloginwidget.h
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)

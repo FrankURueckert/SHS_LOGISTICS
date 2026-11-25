@@ -83,13 +83,16 @@ RailMapWidget::RailMapWidget(QWidget *parent)
 
     initGeographyAndTracks();
     initSourcesAndSinks();
-    initDefaultTrainsAndCargo();
-    updateAllTrainGeometries();
+    // Reiner link2rail Live-Betrieb: Keine simulierten Demo-Züge beim Start.
+    m_trains.clear();
+    m_cargoOrders.clear();
+    m_selectedTrainIdx = -1;
+    m_selectedWagonIdx = -1;
+    m_simRunning = false;
 
     m_simTimer = new QTimer(this);
     m_simTimer->setInterval(33);
     connect(m_simTimer, &QTimer::timeout, this, &RailMapWidget::onSimTimerTick);
-    m_simTimer->start();
 
     m_cameraAnimTimer = new QTimer(this);
     m_cameraAnimTimer->setInterval(16);
@@ -1504,6 +1507,10 @@ void RailMapWidget::updateAllTrainGeometries()
                                           : 21.0;
 
     for (TrainConsist &train : m_trains) {
+        // Reale link2rail Live-GPS-Positionen nicht durch Simulationsgeometrie überschreiben!
+        if (train.isLiveGpsGroup) {
+            continue;
+        }
         const RailTrack *trackPtr = nullptr;
         for (const RailTrack &tr : m_tracks) {
             if (tr.id == train.trackId) {
@@ -1773,13 +1780,19 @@ void RailMapWidget::focusSite(const QString &siteName, bool animate)
         targetLon = 7.1665;
         targetZoom = 15.0;
         m_activeSiteName = QStringLiteral("Saarstahl Werk Neunkirchen (Senke: Vorblöcke | Quelle: Stabstahl & Draht)");
+    } else if (siteName.contains(QStringLiteral("Deutschland"), Qt::CaseInsensitive) ||
+               siteName.contains(QStringLiteral("Europa"), Qt::CaseInsensitive)) {
+        targetLat = 51.1657;
+        targetLon = 10.4515;
+        targetZoom = 6.2;
+        m_activeSiteName = QStringLiteral("Deutschland-Übersicht (DB Cargo link2rail Live-GPS)");
     } else if (siteName.contains(QStringLiteral("Gesamt"), Qt::CaseInsensitive) ||
                siteName.contains(QStringLiteral("Saarland"), Qt::CaseInsensitive) ||
                siteName.contains(QStringLiteral("Alle"), Qt::CaseInsensitive)) {
         targetLat = 49.3000;
         targetLon = 6.9450;
         targetZoom = 11.4;
-        m_activeSiteName = QStringLiteral("Gesamtübersicht Saarland-Netz (Quellen, Senken & Züge)");
+        m_activeSiteName = QStringLiteral("Gesamtübersicht Saarland-Netz (link2rail Live-GPS)");
     } else {
         targetLat = 49.2465;
         targetLon = 6.8555;
@@ -1828,7 +1841,7 @@ void RailMapWidget::zoomOut() { setZoomLevel(m_zoom - 0.6); }
 
 void RailMapWidget::setZoomLevel(double zoom)
 {
-    m_zoom = std::clamp(zoom, 10.0, 18.5);
+    m_zoom = std::clamp(zoom, 5.0, 18.5);
     updateAllTrainGeometries();
     update();
 }
@@ -2288,6 +2301,432 @@ void RailMapWidget::triggerLiveNetworkApiQuery(const QString &endpointUrl,
     emit statusMessage(QStringLiteral("Sende HTTP-GET Anfrage an Bahn-API (%1) ...").arg(endpointUrl));
 }
 
+WagonCategory RailMapWidget::classifyWagonFromLink2Rail(const QString &typeCode, const QString &evn, int axleCount)
+{
+    const QString tc = typeCode.trimmed().toLower();
+    QString evnDigits = evn;
+    evnDigits.remove(' ');
+    evnDigits.remove('-');
+
+    if (tc.contains(QStringLiteral("torpedo")) || tc.contains(QStringLiteral("faals")) ||
+        tc.contains(QStringLiteral("falns")) || tc.contains(QStringLiteral("uaa")) ||
+        evnDigits.contains(QStringLiteral("9981"))) {
+        return WagonCategory::Heavy_6Axle;
+    }
+    if (tc.contains(QStringLiteral("samms")) || tc.startsWith(QStringLiteral("sa")) ||
+        tc.contains(QStringLiteral("sahmms")) || evnDigits.mid(4, 3) == QStringLiteral("489") ||
+        evnDigits.mid(4, 3) == QStringLiteral("486") || evnDigits.mid(4, 3) == QStringLiteral("485")) {
+        return WagonCategory::Samms_6Axle;
+    }
+    if (tc.contains(QStringLiteral("rns")) || tc.startsWith(QStringLiteral("rs")) ||
+        tc.startsWith(QStringLiteral("res")) || tc.startsWith(QStringLiteral("rmms")) ||
+        evnDigits.mid(4, 3) == QStringLiteral("355") || evnDigits.mid(4, 3) == QStringLiteral("390")) {
+        return WagonCategory::Rnsz_4Axle;
+    }
+    if (tc.contains(QStringLiteral("shimm")) || tc.contains(QStringLiteral("eaos")) ||
+        tc.contains(QStringLiteral("eanos")) || tc.contains(QStringLiteral("coil")) ||
+        evnDigits.mid(4, 3) == QStringLiteral("467") || evnDigits.mid(4, 3) == QStringLiteral("477")) {
+        return WagonCategory::Standard_4Axle;
+    }
+
+    if (axleCount >= 6) {
+        return WagonCategory::Samms_6Axle;
+    }
+    if (axleCount == 4) {
+        return WagonCategory::Rnsz_4Axle;
+    }
+    // UIC 5. Ziffer: 4 = Flachwagen Sonderbauart (häufig Samms/Shimmns), 3 = Drehgestell-Flachwagen (Rns-z)
+    if (evnDigits.size() >= 6) {
+        const QChar d5 = evnDigits[4];
+        if (d5 == '4') return WagonCategory::Samms_6Axle;
+        if (d5 == '3') return WagonCategory::Rnsz_4Axle;
+        if (d5 == '5' || d5 == '6') return WagonCategory::Standard_4Axle;
+        if (d5 == '8' || d5 == '9') return WagonCategory::Heavy_6Axle;
+    }
+    return WagonCategory::Samms_6Axle;
+}
+
+CargoProductType RailMapWidget::classifyCargoFromText(const QString &cargoText, bool isLoadedKnown, bool isLoaded)
+{
+    if (isLoadedKnown && !isLoaded) {
+        return CargoProductType::EmptyWagon;
+    }
+    const QString c = cargoText.trimmed().toLower();
+    if (c.isEmpty()) {
+        return isLoadedKnown ? CargoProductType::SteelBillets : CargoProductType::EmptyWagon;
+    }
+    if (c.contains(QStringLiteral("leer")) || c.contains(QStringLiteral("empty"))) {
+        return CargoProductType::EmptyWagon;
+    }
+    if (c.contains(QStringLiteral("roheisen")) || c.contains(QStringLiteral("flüssig")) ||
+        c.contains(QStringLiteral("torpedo")) || c.contains(QStringLiteral("hot metal")) ||
+        c.contains(QStringLiteral("pig iron"))) {
+        return CargoProductType::LiquidPigIron;
+    }
+    if (c.contains(QStringLiteral("grobblech")) || c.contains(QStringLiteral("blech")) ||
+        c.contains(QStringLiteral("plate"))) {
+        return CargoProductType::HeavyPlates;
+    }
+    if (c.contains(QStringLiteral("bramm")) || c.contains(QStringLiteral("slab"))) {
+        return CargoProductType::SteelSlabs;
+    }
+    if (c.contains(QStringLiteral("coil")) || c.contains(QStringLiteral("draht")) ||
+        c.contains(QStringLiteral("wire"))) {
+        return CargoProductType::WireRodCoils;
+    }
+    if (c.contains(QStringLiteral("vorblock")) || c.contains(QStringLiteral("bloom"))) {
+        return CargoProductType::SteelBlooms;
+    }
+    if (c.contains(QStringLiteral("stab")) || c.contains(QStringLiteral("profil")) ||
+        c.contains(QStringLiteral("bar"))) {
+        return CargoProductType::BarSteelProfiles;
+    }
+    if (c.contains(QStringLiteral("schmied")) || c.contains(QStringLiteral("forg"))) {
+        return CargoProductType::ForgedParts;
+    }
+    return CargoProductType::SteelBillets;
+}
+
+void RailMapWidget::applyLink2RailRecords(const QVector<Link2RailWagonRecord> &records)
+{
+    m_lastLink2RailRecords = records;
+    m_trains.clear();
+    m_cargoOrders.clear();
+
+    // Live-Waggon-Zähler an allen Werken/Geofences zurücksetzen
+    for (SourceSinkNode &node : m_sourceSinkNodes) {
+        node.liveWagonCount = 0;
+    }
+
+    // Nach Zugnummer / Sendungsnummer gruppieren; Einzelwaggons ohne Zugnummer separat halten
+    QHash<QString, int> groupToIndex;
+    int singleCounter = 1;
+
+    for (const Link2RailWagonRecord &rec : records) {
+        const bool hasGroup = !rec.trainNumber.trimmed().isEmpty() || !rec.shipmentId.trimmed().isEmpty();
+        const QString groupKey = !rec.trainNumber.trimmed().isEmpty()
+                                     ? rec.trainNumber.trimmed()
+                                     : (!rec.shipmentId.trimmed().isEmpty()
+                                            ? rec.shipmentId.trimmed()
+                                            : QStringLiteral("WAGON-%1").arg(singleCounter++));
+
+        int tIdx = -1;
+        if (hasGroup && groupToIndex.contains(groupKey)) {
+            tIdx = groupToIndex.value(groupKey);
+        } else {
+            TrainConsist tr;
+            tr.id = hasGroup ? groupKey : rec.evn;
+            tr.name = hasGroup
+                          ? QStringLiteral("link2rail Zug/Sendung %1").arg(groupKey)
+                          : QStringLiteral("link2rail Waggon %1").arg(rec.evn);
+            tr.locoName = hasGroup ? QStringLiteral("DB Cargo link2rail") : QString();
+            tr.hasLocomotive = hasGroup && (rec.speedKmh > 0.5 || rec.statusText.contains(QStringLiteral("Transit"), Qt::CaseInsensitive));
+            tr.isLiveGpsGroup = true;
+            tr.isSingleWagon = !hasGroup;
+            tr.providerKey = rec.providerKey;
+            tr.providerName = rec.providerName;
+            tr.providerColor = rec.providerColor;
+            tr.trackId = QStringLiteral("DB-LIVE-NET");
+            tr.sourceNodeId = rec.originName;
+            tr.sinkNodeId = rec.destinationName;
+            tr.speedKmh = rec.speedKmh;
+            tr.lastUpdateIso = rec.timestampIso;
+            tr.currentLocationName = !rec.geofenceSite.isEmpty() ? rec.geofenceSite : rec.locationName;
+            tr.opState = (rec.speedKmh > 0.5) ? TrainOperationState::MovingLoadedToSink : TrainOperationState::ParkedWithoutLoco;
+            m_trains.append(tr);
+            tIdx = m_trains.size() - 1;
+            if (hasGroup) {
+                groupToIndex.insert(groupKey, tIdx);
+            }
+        }
+
+        TrainConsist &consist = m_trains[tIdx];
+
+        WagonData w;
+        w.positionIndex = consist.wagons.size() + 1;
+        w.uicNumber = rec.evn;
+        w.category = classifyWagonFromLink2Rail(rec.wagonTypeCode, rec.evn, rec.axleCount);
+        w.productType = classifyCargoFromText(rec.cargoDescription, rec.isLoadedKnown, rec.isLoaded);
+        w.assignedProductType = w.productType;
+        w.axleCount = (rec.axleCount > 0) ? rec.axleCount : axleCountForCategory(w.category);
+        w.lengthMeters = (rec.lengthMeters > 1.0) ? rec.lengthMeters : lengthForCategory(w.category);
+        w.weightTons = rec.weightTons;
+        w.assignedWeightTons = rec.weightTons;
+        w.cargoDescription = !rec.cargoDescription.isEmpty()
+                                 ? rec.cargoDescription
+                                 : (rec.isLoadedKnown && !rec.isLoaded ? QStringLiteral("Leerwagen") : QStringLiteral("link2rail Gut"));
+
+        w.providerKey = rec.providerKey;
+        w.providerName = rec.providerName;
+        w.providerColor = rec.providerColor;
+        w.isLiveGps = true;
+        w.hasValidGps = rec.hasValidGps;
+        w.rawGpsLat = rec.rawLat;
+        w.rawGpsLon = rec.rawLon;
+        w.currentLat = rec.rawLat;
+        w.currentLon = rec.rawLon;
+        w.headingDeg = (rec.headingDeg >= 0.0) ? rec.headingDeg : 0.0;
+        w.speedKmh = rec.speedKmh;
+        w.wagonTypeRaw = !rec.wagonTypeCode.isEmpty() ? rec.wagonTypeCode : shortCodeForWagon(w.category);
+        w.liveStatusText = rec.statusText;
+        w.lastEventType = rec.lastEventType;
+        w.locationName = rec.locationName;
+        w.locationCode = rec.locationCode;
+        w.geofenceSite = rec.geofenceSite;
+        w.standingTimeMinutes = rec.standingTimeMinutes;
+        w.timestampIso = rec.timestampIso;
+        w.originName = rec.originName;
+        w.destinationName = rec.destinationName;
+        w.etaIso = rec.etaIso;
+        w.telematicsBoxId = rec.telematicsBoxId;
+        w.temperatureC = rec.temperatureC;
+        w.batteryPercent = rec.batteryPercent;
+        w.sourceEndpoint = rec.sourceEndpoint;
+        w.rawAttributes = rec.rawAttributes;
+
+        // Intelligentes Gleis-Snapping im Nahbereich lokaler Saarland-Werksgleise (<= 120 m)
+        if (w.hasValidGps && m_snapLiveGpsToTracks) {
+            double bestDistM = 1e9;
+            const RailTrack *bestTrack = nullptr;
+            double bestAlongM = 0.0;
+            double bestLat = w.rawGpsLat;
+            double bestLon = w.rawGpsLon;
+            double bestHeading = w.headingDeg;
+
+            for (const RailTrack &rt : m_tracks) {
+                const double along = findNearestTrackDistance(rt, w.rawGpsLat, w.rawGpsLon);
+                double sLat = 0.0, sLon = 0.0, sHead = 0.0;
+                sampleTrackAtDistance(rt, along, sLat, sLon, sHead);
+                const double dM = haversineMeters(w.rawGpsLat, w.rawGpsLon, sLat, sLon);
+                if (dM < bestDistM) {
+                    bestDistM = dM;
+                    bestTrack = &rt;
+                    bestAlongM = along;
+                    bestLat = sLat;
+                    bestLon = sLon;
+                    bestHeading = sHead;
+                }
+            }
+
+            if (bestTrack && bestDistM <= 120.0) {
+                w.currentLat = bestLat;
+                w.currentLon = bestLon;
+                if (rec.headingDeg < 0.0) {
+                    w.headingDeg = bestHeading;
+                }
+                w.isSnappedToTrack = true;
+                consist.trackId = bestTrack->id;
+                consist.headDistanceMeters = bestAlongM;
+            }
+        }
+
+        // Geofence-Zuordnung zu den 10 SHS-Werken/Anlagen (Radius <= 900 m oder Namens-/DS100-Match)
+        if (w.hasValidGps) {
+            int nearestNodeIdx = -1;
+            double nearestNodeDist = 900.0;
+            for (int nIdx = 0; nIdx < m_sourceSinkNodes.size(); ++nIdx) {
+                const double d = haversineMeters(w.currentLat, w.currentLon,
+                                                 m_sourceSinkNodes[nIdx].lat, m_sourceSinkNodes[nIdx].lon);
+                if (d < nearestNodeDist) {
+                    nearestNodeDist = d;
+                    nearestNodeIdx = nIdx;
+                }
+            }
+            if (nearestNodeIdx >= 0) {
+                m_sourceSinkNodes[nearestNodeIdx].liveWagonCount++;
+                if (w.geofenceSite.isEmpty()) {
+                    w.geofenceSite = m_sourceSinkNodes[nearestNodeIdx].name;
+                }
+            }
+        }
+
+        // Kopfposition des Verbands aus erstem Waggon mit GPS übernehmen
+        if (consist.wagons.isEmpty() && w.hasValidGps) {
+            consist.locoLat = w.currentLat;
+            consist.locoLon = w.currentLon;
+            consist.locoHeadingDeg = w.headingDeg;
+        }
+        if (consist.lastUpdateIso.isEmpty() && !w.timestampIso.isEmpty()) {
+            consist.lastUpdateIso = w.timestampIso;
+        }
+        if (consist.currentLocationName.isEmpty()) {
+            consist.currentLocationName = !w.geofenceSite.isEmpty() ? w.geofenceSite : w.locationName;
+        }
+
+        consist.wagons.append(w);
+    }
+
+    // Bei Mehrwagen-Verbänden mit gleicher GPS-Koordinate (z. B. Zug-Event) Waggons leicht auffächern,
+    // damit alle Einzelwaggons anklickbar und sichtbar bleiben
+    for (TrainConsist &consist : m_trains) {
+        if (consist.wagons.size() >= 2) {
+            bool allSameGps = true;
+            const double lat0 = consist.wagons[0].currentLat;
+            const double lon0 = consist.wagons[0].currentLon;
+            for (int i = 1; i < consist.wagons.size(); ++i) {
+                if (haversineMeters(lat0, lon0, consist.wagons[i].currentLat, consist.wagons[i].currentLon) > 3.0) {
+                    allSameGps = false;
+                    break;
+                }
+            }
+            if (allSameGps && consist.wagons[0].hasValidGps) {
+                const double brngRad = degToRad(consist.wagons[0].headingDeg + 180.0);
+                for (int i = 1; i < consist.wagons.size(); ++i) {
+                    const double offsetM = i * 20.0;
+                    const double dLat = (offsetM * std::cos(brngRad)) / 111320.0;
+                    const double dLon = (offsetM * std::sin(brngRad)) / (111320.0 * std::cos(degToRad(lat0)));
+                    consist.wagons[i].currentLat = lat0 + dLat;
+                    consist.wagons[i].currentLon = lon0 + dLon;
+                }
+            }
+        }
+    }
+
+    if (m_trains.isEmpty()) {
+        m_selectedTrainIdx = -1;
+        m_selectedWagonIdx = -1;
+    } else {
+        m_selectedTrainIdx = std::clamp(m_selectedTrainIdx, 0, static_cast<int>(m_trains.size()) - 1);
+        m_selectedWagonIdx = 0;
+    }
+
+    emit trainsUpdated();
+    emit cargoAndNodesUpdated();
+    update();
+}
+
+void RailMapWidget::clearLiveWagons()
+{
+    m_lastLink2RailRecords.clear();
+    m_trains.clear();
+    m_cargoOrders.clear();
+    for (SourceSinkNode &node : m_sourceSinkNodes) {
+        node.liveWagonCount = 0;
+    }
+    m_selectedTrainIdx = -1;
+    m_selectedWagonIdx = -1;
+    emit trainsUpdated();
+    emit cargoAndNodesUpdated();
+    update();
+}
+
+void RailMapWidget::setLink2RailStatus(bool authenticated, const QString &user, const QString &lastSyncStr)
+{
+    m_l2rAuthenticated = authenticated;
+    m_l2rUser = user;
+    m_l2rLastSync = lastSyncStr;
+    update();
+}
+
+void RailMapWidget::setMultiProviderStatus(int activeProvidersCount, int totalProvidersCount,
+                                           const QString &activeNamesSummary, const QString &lastSyncStr)
+{
+    m_activeProvidersCount = activeProvidersCount;
+    m_totalProvidersCount = totalProvidersCount;
+    m_activeProvidersSummary = activeNamesSummary;
+    m_l2rAuthenticated = (activeProvidersCount > 0);
+    m_l2rUser = activeNamesSummary;
+    m_l2rLastSync = lastSyncStr;
+    update();
+}
+
+void RailMapWidget::setProviderVisible(const QString &providerKey, bool visible)
+{
+    if (visible) {
+        m_hiddenProviderKeys.remove(providerKey);
+    } else {
+        m_hiddenProviderKeys.insert(providerKey);
+    }
+    update();
+}
+
+bool RailMapWidget::isProviderVisible(const QString &providerKey) const
+{
+    return !m_hiddenProviderKeys.contains(providerKey);
+}
+
+void RailMapWidget::setSnapLiveGpsToTracks(bool enable)
+{
+    m_snapLiveGpsToTracks = enable;
+    if (!m_lastLink2RailRecords.isEmpty()) {
+        applyLink2RailRecords(m_lastLink2RailRecords);
+    }
+}
+
+void RailMapWidget::fitAllLiveWagons(bool animate)
+{
+    double minLat = 90.0, maxLat = -90.0;
+    double minLon = 180.0, maxLon = -180.0;
+    int gpsCount = 0;
+
+    for (const TrainConsist &tr : m_trains) {
+        for (const WagonData &w : tr.wagons) {
+            if (!w.hasValidGps) continue;
+            minLat = std::min(minLat, w.currentLat);
+            maxLat = std::max(maxLat, w.currentLat);
+            minLon = std::min(minLon, w.currentLon);
+            maxLon = std::max(maxLon, w.currentLon);
+            gpsCount++;
+        }
+    }
+
+    if (gpsCount == 0) {
+        focusSite(QStringLiteral("Voelklingen"), animate);
+        return;
+    }
+
+    const double targetLat = (minLat + maxLat) * 0.5;
+    const double targetLon = (minLon + maxLon) * 0.5;
+    double targetZoom = 15.2;
+
+    if (gpsCount > 1) {
+        const double spanLat = std::max(0.002, (maxLat - minLat) * 1.45);
+        const double spanLon = std::max(0.003, (maxLon - minLon) * 1.45);
+        const double zLon = std::log2((std::max(300, width()) * 360.0) / (256.0 * spanLon));
+        const double zLat = std::log2((std::max(250, height()) * 170.0) / (256.0 * spanLat));
+        targetZoom = std::clamp(std::min(zLon, zLat), 5.5, 16.0);
+    }
+
+    m_activeSiteName = QStringLiteral("Alle link2rail Live-Waggons (%1 mit GPS)").arg(gpsCount);
+    if (!animate) {
+        m_centerLat = targetLat;
+        m_centerLon = targetLon;
+        m_zoom = targetZoom;
+        update();
+        return;
+    }
+
+    m_animStartLat = m_centerLat;
+    m_animStartLon = m_centerLon;
+    m_animStartZoom = m_zoom;
+    m_animTargetLat = targetLat;
+    m_animTargetLon = targetLon;
+    m_animTargetZoom = targetZoom;
+    m_animProgress = 0.0;
+    m_cameraAnimTimer->start();
+    emit statusMessage(QStringLiteral("Kamera auf alle %1 link2rail GPS-Waggons ausgerichtet.").arg(gpsCount));
+}
+
+int RailMapWidget::totalLiveWagonsCount() const
+{
+    int count = 0;
+    for (const TrainConsist &tr : m_trains) {
+        count += tr.wagons.size();
+    }
+    return count;
+}
+
+int RailMapWidget::totalLiveGpsWagonsCount() const
+{
+    int count = 0;
+    for (const TrainConsist &tr : m_trains) {
+        for (const WagonData &w : tr.wagons) {
+            if (w.hasValidGps) count++;
+        }
+    }
+    return count;
+}
+
 QPointF RailMapWidget::geoToScreen(double lat, double lon) const
 {
     const double worldSize = 256.0 * std::pow(2.0, m_zoom);
@@ -2422,7 +2861,7 @@ void RailMapWidget::drawMapTiles(QPainter &painter)
         lyrs = QStringLiteral("s");
     }
 
-    const int tileZ = std::clamp(static_cast<int>(std::floor(m_zoom)), 10, 18);
+    const int tileZ = std::clamp(static_cast<int>(std::floor(m_zoom)), 5, 18);
     const double scale = std::pow(2.0, m_zoom - tileZ);
     const double tileSizePx = 256.0 * scale;
     const int numTiles = 1 << tileZ;
@@ -2723,22 +3162,18 @@ void RailMapWidget::drawSourcesAndSinks(QPainter &painter)
                              Qt::AlignLeft | Qt::AlignVCenter,
                              QString("⬇️ Abladung: %1").arg(n.consumedGoods));
 
-            // Kleiner Lagerbestand-Füllbalken + Bilanz (Aufgenommen / Abgeladen)
-            const double fillRatio = std::clamp(n.currentStockTons / std::max(1.0, n.maxCapacityTons), 0.0, 1.0);
-            const QRectF barBg(card.left() + 6, card.top() + 44, 88, 6);
-            painter.setBrush(QColor("#334155"));
-            painter.setPen(Qt::NoPen);
-            painter.drawRoundedRect(barBg, 2, 2);
-            painter.setBrush(n.badgeColor);
-            painter.drawRoundedRect(QRectF(barBg.left(), barBg.top(), barBg.width() * fillRatio, barBg.height()), 2, 2);
+            // Live-Waggon-Status im Werk / Geofence
+            const QRectF barBg(card.left() + 6, card.top() + 42, card.width() - 12, 12);
+            painter.setBrush(n.liveWagonCount > 0 ? QColor("#065F46") : QColor("#1E293B"));
+            painter.setPen(QPen(n.liveWagonCount > 0 ? QColor("#34D399") : QColor("#475569"), 1.0));
+            painter.drawRoundedRect(barBg, 3, 3);
 
-            painter.setPen(QColor("#E2E8F0"));
-            painter.drawText(QRectF(card.left() + 98, card.top() + 40, 148, 14),
-                             Qt::AlignRight | Qt::AlignVCenter,
-                             QString("⬆️%1t  ⬇️%2t  (%3t)")
-                                 .arg(n.totalLoadedTons, 0, 'f', 0)
-                                 .arg(n.totalUnloadedTons, 0, 'f', 0)
-                                 .arg(n.currentStockTons, 0, 'f', 0));
+            painter.setPen(n.liveWagonCount > 0 ? QColor("#A7F3D0") : QColor("#94A3B8"));
+            painter.drawText(barBg.adjusted(4, 0, -4, 0),
+                             Qt::AlignCenter,
+                             n.liveWagonCount > 0
+                                 ? QString("📡 link2rail LIVE: %1 Waggon(s) im Bereich").arg(n.liveWagonCount)
+                                 : QStringLiteral("📡 link2rail Geofence aktiv (0 Waggons)"));
         }
     }
 
@@ -2812,7 +3247,10 @@ void RailMapWidget::drawSingleWagon2D(QPainter &painter, const WagonData &wagon,
     painter.translate(screenPos);
     painter.rotate(wagon.headingDeg - 90.0);
 
-    const QColor bodyColor = colorForWagon(wagon.category, m_colorMode);
+    const QColor bodyColor = (m_colorMode == WagonColorMode::ByTelematicsProvider &&
+                              wagon.isLiveGps && wagon.providerColor.isValid())
+                                 ? wagon.providerColor
+                                 : colorForWagon(wagon.category, m_colorMode);
 
     // 1. Auswahl-Halo
     if (isWagonSelected) {
@@ -2998,10 +3436,17 @@ void RailMapWidget::drawSingleWagon2D(QPainter &painter, const WagonData &wagon,
         f.setBold(true);
         painter.setFont(f);
 
-        const QString label = (m_zoom >= 15.0 || isWagonSelected)
-                              ? QString("#%1 %2:%3").arg(wagon.positionIndex)
-                                    .arg(shortCodeForWagon(wagon.category), productShortName(wagon.productType))
-                              : QString("#%1 (%2A)").arg(wagon.positionIndex).arg(wagon.axleCount);
+        QString label;
+        if (wagon.isLiveGps) {
+            label = (m_zoom >= 14.5 || isWagonSelected)
+                        ? QString("[%1] %2 (%3)").arg(wagon.providerName, wagon.uicNumber, wagon.wagonTypeRaw)
+                        : QString("[%1] %2").arg(wagon.providerName, wagon.uicNumber);
+        } else {
+            label = (m_zoom >= 15.0 || isWagonSelected)
+                        ? QString("#%1 %2:%3").arg(wagon.positionIndex)
+                              .arg(shortCodeForWagon(wagon.category), productShortName(wagon.productType))
+                        : QString("#%1 (%2A)").arg(wagon.positionIndex).arg(wagon.axleCount);
+        }
 
         const QFontMetrics fm(f);
         const int tw = fm.horizontalAdvance(label) + 8;
@@ -3071,26 +3516,34 @@ void RailMapWidget::drawLocomotive2D(QPainter &painter, const TrainConsist &trai
     f.setBold(true);
     painter.setFont(f);
 
-    QString stateSuffix;
-    if (train.opState == TrainOperationState::LoadingAtSource) {
-        stateSuffix = QString(" | ⬆️ AUFNAHME %1%").arg(static_cast<int>(std::round(train.opProgress * 100.0)));
-    } else if (train.opState == TrainOperationState::UnloadingAtSink) {
-        stateSuffix = QString(" | ⬇️ ABLADUNG %1%").arg(static_cast<int>(std::round(train.opProgress * 100.0)));
-    } else if (train.opState == TrainOperationState::MovingEmptyToSource) {
-        stateSuffix = QStringLiteral(" | LEER -> QUELLE");
+    QString tag;
+    QColor badgeBg = isSelected ? QColor("#EF7D00") : QColor(30, 41, 59, 235);
+    if (train.isLiveGpsGroup) {
+        const QString spdTxt = (train.speedKmh > 0.5)
+                                   ? QString(" | %1 km/h").arg(train.speedKmh, 0, 'f', 0)
+                                   : QStringLiteral(" | LIVE");
+        tag = QString("📡 [%1] %2 (%3 Wg.%4)").arg(train.providerName, train.id).arg(train.wagons.size()).arg(spdTxt);
+        badgeBg = isSelected ? QColor("#EF7D00")
+                             : (train.providerColor.isValid() ? train.providerColor.darker(115) : QColor(13, 148, 136, 238));
+    } else {
+        QString stateSuffix;
+        if (train.opState == TrainOperationState::LoadingAtSource) {
+            stateSuffix = QString(" | ⬆️ AUFNAHME %1%").arg(static_cast<int>(std::round(train.opProgress * 100.0)));
+        } else if (train.opState == TrainOperationState::UnloadingAtSink) {
+            stateSuffix = QString(" | ⬇️ ABLADUNG %1%").arg(static_cast<int>(std::round(train.opProgress * 100.0)));
+        } else if (train.opState == TrainOperationState::MovingEmptyToSource) {
+            stateSuffix = QStringLiteral(" | LEER -> QUELLE");
+        }
+        tag = QString("🚂 %1 (%2 Wg.%3)").arg(train.id).arg(train.wagons.size()).arg(stateSuffix);
+        if (train.opState == TrainOperationState::LoadingAtSource) {
+            badgeBg = QColor(21, 128, 61, 240);
+        } else if (train.opState == TrainOperationState::UnloadingAtSink) {
+            badgeBg = QColor(3, 105, 161, 240);
+        }
     }
-
-    const QString tag = QString("🚂 %1 (%2 Wg.%3)").arg(train.id).arg(train.wagons.size()).arg(stateSuffix);
     const QFontMetrics fm(f);
     const int tw = fm.horizontalAdvance(tag) + 12;
     const QRectF tagRect(screenPos.x() - tw * 0.5, screenPos.y() - widPx - 24.0, tw, 18.0);
-
-    QColor badgeBg = isSelected ? QColor("#EF7D00") : QColor(30, 41, 59, 235);
-    if (train.opState == TrainOperationState::LoadingAtSource) {
-        badgeBg = QColor(21, 128, 61, 240); // Grün: Güter-Aufnahme an Quelle
-    } else if (train.opState == TrainOperationState::UnloadingAtSink) {
-        badgeBg = QColor(3, 105, 161, 240); // Blau: Güter-Abladung an Senke
-    }
 
     painter.setBrush(badgeBg);
     painter.setPen(QPen(QColor("#FBD50E"), isSelected ? 2.0 : 1.3));
@@ -3123,15 +3576,37 @@ void RailMapWidget::drawParkedConsistMarker2D(QPainter &painter, const TrainCons
     }
 
     painter.save();
+    QFont f = painter.font();
+    f.setPointSize(8);
+    f.setBold(true);
+    painter.setFont(f);
+
+    if (train.isLiveGpsGroup) {
+        // Kompaktes Multi-Provider Live-GPS-Badge mit Dienst-Kennfarbe
+        const QString locHint = !train.currentLocationName.isEmpty()
+                                    ? (QStringLiteral(" | ") + train.currentLocationName)
+                                    : QString();
+        const QString tag = train.isSingleWagon
+                                ? QString("📡 [%1] %2%3").arg(train.providerName, train.id, locHint)
+                                : QString("📡 [%1] %2 (%3 Wg.%4)").arg(train.providerName, train.id).arg(train.wagons.size()).arg(locHint);
+        const QFontMetrics fm(f);
+        const int tw = fm.horizontalAdvance(tag) + 12;
+        const QRectF tagRect(screenPos.x() - tw * 0.5, screenPos.y() - 32.0, tw, 18.0);
+        const QColor pCol = train.providerColor.isValid() ? train.providerColor.darker(115) : QColor(15, 118, 110, 235);
+        painter.setBrush(isSelected ? QColor("#EF7D00") : pCol);
+        painter.setPen(QPen(QColor("#FBD50E"), isSelected ? 2.0 : 1.3));
+        painter.drawRoundedRect(tagRect, 4, 4);
+        painter.setPen(QColor("#FFFFFF"));
+        painter.drawText(tagRect, Qt::AlignCenter, tag);
+        painter.restore();
+        return;
+    }
+
     // Gelber Hemmschuh / Park-Marker am Kopf der abgestellten Waggongruppe
     painter.setBrush(QColor("#9333EA"));
     painter.setPen(QPen(QColor("#FDE047"), 2.2));
     painter.drawRoundedRect(QRectF(screenPos.x() - 9, screenPos.y() - 9, 18, 18), 4, 4);
 
-    QFont f = painter.font();
-    f.setPointSize(8);
-    f.setBold(true);
-    painter.setFont(f);
     const QString tag = QString("🅿️ %1 (KEINE LOK – GELAGERT)").arg(train.id);
     const QFontMetrics fm(f);
     const int tw = fm.horizontalAdvance(tag) + 12;
@@ -3155,26 +3630,97 @@ void RailMapWidget::drawTrainsAndWagons(QPainter &painter)
 
     for (int tIdx = 0; tIdx < m_trains.size(); ++tIdx) {
         const TrainConsist &tr = m_trains[tIdx];
+        if (tr.isLiveGpsGroup && m_hiddenProviderKeys.contains(tr.providerKey)) {
+            continue;
+        }
         const bool trainSelected = (tIdx == m_selectedTrainIdx);
 
-        QPainterPath couplerPath;
-        couplerPath.moveTo(geoToScreen(tr.locoLat, tr.locoLon));
-        for (const WagonData &w : tr.wagons) {
-            couplerPath.lineTo(geoToScreen(w.currentLat, w.currentLon));
+        // Bei Weitwinkel-Zoom (z. B. Deutschland-Übersicht <= 11.2): hochkontrastige GPS-Pins zeichnen
+        if (tr.isLiveGpsGroup && m_zoom <= 11.2) {
+            for (int wIdx = 0; wIdx < tr.wagons.size(); ++wIdx) {
+                const WagonData &w = tr.wagons[wIdx];
+                if (!w.hasValidGps || m_hiddenProviderKeys.contains(w.providerKey)) continue;
+                const QPointF pt = geoToScreen(w.currentLat, w.currentLon);
+                const_cast<WagonData&>(w).lastScreenBounds = QRectF(pt.x() - 12, pt.y() - 12, 24, 24);
+                if (!rect().adjusted(-50, -50, 50, 50).contains(pt.toPoint())) continue;
+
+                const QColor col = (m_colorMode == WagonColorMode::ByTelematicsProvider && w.providerColor.isValid())
+                                       ? w.providerColor
+                                       : colorForWagon(w.category, m_colorMode);
+                const bool wSel = trainSelected && (wIdx == m_selectedWagonIdx);
+                painter.setBrush(QColor(col.red(), col.green(), col.blue(), 65));
+                painter.setPen(Qt::NoPen);
+                painter.drawEllipse(pt, wSel ? 13.0 : 9.5, wSel ? 13.0 : 9.5);
+
+                painter.setBrush(col);
+                painter.setPen(QPen(wSel ? QColor("#FBD50E") : Qt::white, wSel ? 2.4 : 1.5));
+                painter.drawEllipse(pt, wSel ? 6.5 : 5.0, wSel ? 6.5 : 5.0);
+            }
+            if (!tr.wagons.isEmpty() && tr.wagons[0].hasValidGps) {
+                const QPointF pt0 = geoToScreen(tr.wagons[0].currentLat, tr.wagons[0].currentLon);
+                const_cast<TrainConsist&>(tr).lastLocoScreenBounds = QRectF(pt0.x() - 14, pt0.y() - 14, 28, 28);
+                if (m_showWagonLabels || trainSelected) {
+                    QFont f = painter.font();
+                    f.setPointSize(7);
+                    f.setBold(true);
+                    painter.setFont(f);
+                    const QString lbl = tr.isSingleWagon
+                                            ? QString("[%1] %2").arg(tr.providerName, tr.id)
+                                            : QString("[%1] %2 (%3 Wg.)").arg(tr.providerName, tr.id).arg(tr.wagons.size());
+                    const QFontMetrics fm(f);
+                    const int tw = fm.horizontalAdvance(lbl) + 10;
+                    const QRectF r(pt0.x() - tw * 0.5, pt0.y() - 24, tw, 15);
+                    painter.setBrush(trainSelected ? QColor("#EF7D00") : QColor(15, 23, 42, 225));
+                    painter.setPen(QPen(tr.providerColor.isValid() ? tr.providerColor : QColor("#38BDF8"), 1.3));
+                    painter.drawRoundedRect(r, 3, 3);
+                    painter.setPen(Qt::white);
+                    painter.drawText(r, Qt::AlignCenter, lbl);
+                }
+            }
+            continue;
         }
-        painter.setBrush(Qt::NoBrush);
-        painter.setPen(QPen(trainSelected ? QColor("#FBD50E") : QColor("#E2E8F0"), 2.4));
-        painter.drawPath(couplerPath);
+
+        if (!tr.isSingleWagon && tr.wagons.size() >= 2) {
+            QPainterPath couplerPath;
+            bool started = false;
+            for (const WagonData &w : tr.wagons) {
+                if (!w.hasValidGps) continue;
+                const QPointF wp = geoToScreen(w.currentLat, w.currentLon);
+                if (!started) {
+                    couplerPath.moveTo(wp);
+                    started = true;
+                } else {
+                    couplerPath.lineTo(wp);
+                }
+            }
+            painter.setBrush(Qt::NoBrush);
+            painter.setPen(QPen(trainSelected ? QColor("#FBD50E") : QColor("#E2E8F0"), 2.4));
+            painter.drawPath(couplerPath);
+        }
 
         for (int wIdx = tr.wagons.size() - 1; wIdx >= 0; --wIdx) {
+            const WagonData &w = tr.wagons[wIdx];
+            if (!w.hasValidGps) continue;
             const bool wagonSelected = trainSelected && (wIdx == m_selectedWagonIdx);
-            drawSingleWagon2D(painter, tr.wagons[wIdx], trainSelected, wagonSelected,
-                              !tr.hasLocomotive, scalePxPerMeter);
+
+            // Falls GPS auf Gleis gesnappt wurde, Roh-GPS-Punkt dezent in Cyan anzeigen
+            if (w.isLiveGps && w.isSnappedToTrack && m_zoom >= 15.0) {
+                const QPointF rawPt = geoToScreen(w.rawGpsLat, w.rawGpsLon);
+                const QPointF snapPt = geoToScreen(w.currentLat, w.currentLon);
+                painter.setPen(QPen(QColor(56, 189, 248, 150), 1.2, Qt::DashLine));
+                painter.drawLine(rawPt, snapPt);
+                painter.setBrush(QColor("#38BDF8"));
+                painter.setPen(Qt::NoPen);
+                painter.drawEllipse(rawPt, 3.0, 3.0);
+            }
+
+            drawSingleWagon2D(painter, w, trainSelected, wagonSelected,
+                              !tr.hasLocomotive && !tr.isLiveGpsGroup, scalePxPerMeter);
         }
 
         if (tr.hasLocomotive) {
             drawLocomotive2D(painter, tr, trainSelected, scalePxPerMeter);
-        } else {
+        } else if (!tr.wagons.isEmpty() && tr.wagons[0].hasValidGps) {
             drawParkedConsistMarker2D(painter, tr, trainSelected);
         }
     }
@@ -3187,113 +3733,161 @@ void RailMapWidget::drawHudOverlay(QPainter &painter)
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    const QRectF topHud(14, 14, 465, 86);
-    painter.setBrush(QColor(30, 41, 59, 232));
-    painter.setPen(QPen(QColor("#5C839C"), 1.5));
+    const QRectF topHud(14, 14, 510, 88);
+    painter.setBrush(QColor(30, 41, 59, 236));
+    painter.setPen(QPen(m_l2rAuthenticated ? QColor("#10B981") : QColor("#EF7D00"), 1.6));
     painter.drawRoundedRect(topHud, 6, 6);
 
-    painter.setBrush(QColor("#EF7D00"));
+    painter.setBrush(m_l2rAuthenticated ? QColor("#10B981") : QColor("#EF7D00"));
     painter.setPen(Qt::NoPen);
-    painter.drawRoundedRect(QRectF(14, 14, 6, 86), 3, 3);
+    painter.drawRoundedRect(QRectF(14, 14, 6, 88), 3, 3);
 
     QFont titleFont = painter.font();
     titleFont.setPointSize(9);
     titleFont.setBold(true);
     painter.setFont(titleFont);
     painter.setPen(QColor("#FBD50E"));
-    painter.drawText(QRectF(28, 18, 440, 20), Qt::AlignLeft | Qt::AlignVCenter,
+    painter.drawText(QRectF(28, 18, 488, 20), Qt::AlignLeft | Qt::AlignVCenter,
                      QStringLiteral("📍 ") + m_activeSiteName);
 
     QFont subFont = painter.font();
     subFont.setPointSize(8);
     subFont.setBold(false);
     painter.setFont(subFont);
+    const QString connStatus = (m_activeProvidersCount > 0)
+                                   ? QString("🟢 Telematik-Dienste aktiv (%1/%2): %3  |  Sync: %4")
+                                         .arg(m_activeProvidersCount).arg(m_totalProvidersCount)
+                                         .arg(m_activeProvidersSummary, m_l2rLastSync.isEmpty() ? QStringLiteral("aktiv") : m_l2rLastSync)
+                                   : QStringLiteral("🔴 Kein Telematik-Dienst angemeldet (Tab '🔐 Dienste & Logins' öffnen)");
+    painter.setPen(m_activeProvidersCount > 0 ? QColor("#86EFAC") : QColor("#FDE047"));
+    painter.drawText(QRectF(28, 40, 488, 18), Qt::AlignLeft | Qt::AlignVCenter, connStatus);
+
     painter.setPen(QColor("#E2E8F0"));
-    painter.drawText(QRectF(28, 40, 440, 18), Qt::AlignLeft | Qt::AlignVCenter,
-                     QString("Lokomotiv-Pool: %1/%2 im Einsatz (%3 frei)  |  Gelagerte Waggongruppen ohne Lok: %4")
-                         .arg(usedLocomotivesCount())
-                         .arg(m_totalLocosInPool)
-                         .arg(freeLocomotivesCount())
-                         .arg(std::max(0, static_cast<int>(m_trains.size()) - usedLocomotivesCount())));
+    painter.drawText(QRectF(28, 60, 488, 18), Qt::AlignLeft | Qt::AlignVCenter,
+                     QString("Gesamt Live-Waggons: %1 (%2 GPS) | Verbände: %3 | Gleis-Snapping: %4 | Zoom: %5x")
+                         .arg(totalLiveWagonsCount())
+                         .arg(totalLiveGpsWagonsCount())
+                         .arg(m_trains.size())
+                         .arg(m_snapLiveGpsToTracks ? QStringLiteral("AN") : QStringLiteral("AUS"))
+                         .arg(m_zoom, 0, 'f', 1));
     painter.setPen(QColor("#94A3B8"));
-    painter.drawText(QRectF(28, 60, 440, 18), Qt::AlignLeft | Qt::AlignVCenter,
-                     QString("GPS: %1° N, %2° E | Zoom: %3x | Quellen & Senken aktiv: %4")
-                         .arg(m_centerLat, 0, 'f', 4).arg(m_centerLon, 0, 'f', 4)
-                         .arg(m_zoom, 0, 'f', 1).arg(m_sourceSinkNodes.size()));
-    painter.drawText(QRectF(28, 78, 440, 16), Qt::AlignLeft | Qt::AlignVCenter,
-                     QStringLiteral("Mausrad: Zoom | Ziehen: Karte bewegen | Klick auf Waggon: Güter & Achsen prüfen"));
+    painter.drawText(QRectF(28, 79, 488, 16), Qt::AlignLeft | Qt::AlignVCenter,
+                     QString("Mitte: %1° N, %2° E | Mausrad: Zoom | Ziehen: Bewegen | Klick: Waggon-Details")
+                         .arg(m_centerLat, 0, 'f', 4).arg(m_centerLon, 0, 'f', 4));
 
-    // Unten-Links: Farblegende
-    const QRectF legendRect(14, height() - 126, 375, 112);
-    painter.setBrush(QColor(30, 41, 59, 232));
-    painter.setPen(QPen(QColor("#5C839C"), 1.5));
-    painter.drawRoundedRect(legendRect, 6, 6);
+    // Unten-Links: Dynamische Farblegende (Waggon-Bauart ODER alle 6 Telematik-Dienste)
+    if (m_colorMode == WagonColorMode::ByTelematicsProvider) {
+        const auto providers = Link2RailClient::allProviders();
+        const QRectF legendRect(14, height() - 166, 375, 152);
+        painter.setBrush(QColor(30, 41, 59, 235));
+        painter.setPen(QPen(QColor("#5C839C"), 1.5));
+        painter.drawRoundedRect(legendRect, 6, 6);
 
-    titleFont.setPointSize(9);
-    painter.setFont(titleFont);
-    painter.setPen(QColor("#FBD50E"));
-    painter.drawText(QRectF(26, height() - 120, 350, 18),
-                     QStringLiteral("Waggon- & Güter-Legende (Bauart & Achsen):"));
+        titleFont.setPointSize(9);
+        painter.setFont(titleFont);
+        painter.setPen(QColor("#FBD50E"));
+        painter.drawText(QRectF(26, height() - 160, 350, 18),
+                         QStringLiteral("Legende nach Telematik-Dienst (6 Portale):"));
 
-    struct LegendEntry { WagonCategory cat; QString text; };
-    const QVector<LegendEntry> entries = {
-        {WagonCategory::Samms_6Axle,    QStringLiteral("Samms [6-Achser]: Knüppel, Brammen, Vorblöcke, Schmiede")},
-        {WagonCategory::Rnsz_4Axle,     QStringLiteral("Rns-z [4-Achser]: Dillinger Grobbleche, Stabstahl, Profile")},
-        {WagonCategory::Standard_4Axle, QStringLiteral("4-Achser Shimmns: Aufgerollter Walzdraht (Drahtcoils)")},
-        {WagonCategory::Heavy_6Axle,    QStringLiteral("6-Achser Torpedo/Faals: Flüssigroheisen (1420°C) & Erz")}
-    };
+        subFont.setPointSize(8);
+        painter.setFont(subFont);
+        for (int i = 0; i < providers.size(); ++i) {
+            const double y = height() - 137 + i * 20.0;
+            painter.setBrush(providers[i].badgeColor);
+            painter.setPen(QPen(Qt::white, 1.0));
+            painter.drawRoundedRect(QRectF(26, y, 22, 13), 2, 2);
+            painter.setPen(QColor("#F8FAFC"));
+            painter.drawText(QRectF(56, y - 2, 325, 17), Qt::AlignLeft | Qt::AlignVCenter, providers[i].displayName);
+        }
+    } else {
+        const QRectF legendRect(14, height() - 126, 375, 112);
+        painter.setBrush(QColor(30, 41, 59, 232));
+        painter.setPen(QPen(QColor("#5C839C"), 1.5));
+        painter.drawRoundedRect(legendRect, 6, 6);
 
-    subFont.setPointSize(8);
-    painter.setFont(subFont);
-    for (int i = 0; i < entries.size(); ++i) {
-        const double y = height() - 96 + i * 21.0;
-        const QColor c = colorForWagon(entries[i].cat, m_colorMode);
-        painter.setBrush(c);
-        painter.setPen(QPen(Qt::white, 1.0));
-        painter.drawRoundedRect(QRectF(26, y, 22, 13), 2, 2);
-        painter.setPen(QColor("#F8FAFC"));
-        painter.drawText(QRectF(56, y - 2, 325, 17), Qt::AlignLeft | Qt::AlignVCenter, entries[i].text);
+        titleFont.setPointSize(9);
+        painter.setFont(titleFont);
+        painter.setPen(QColor("#FBD50E"));
+        painter.drawText(QRectF(26, height() - 120, 350, 18),
+                         QStringLiteral("Waggon- & Güter-Legende (Bauart & Achsen):"));
+
+        struct LegendEntry { WagonCategory cat; QString text; };
+        const QVector<LegendEntry> entries = {
+            {WagonCategory::Samms_6Axle,    QStringLiteral("Samms [6-Achser]: Knüppel, Brammen, Vorblöcke, Schmiede")},
+            {WagonCategory::Rnsz_4Axle,     QStringLiteral("Rns-z [4-Achser]: Dillinger Grobbleche, Stabstahl, Profile")},
+            {WagonCategory::Standard_4Axle, QStringLiteral("4-Achser Shimmns/Eaos: Walzdraht-Coils & Stückgut")},
+            {WagonCategory::Heavy_6Axle,    QStringLiteral("6-Achser Torpedo/Faals: Flüssigroheisen (1420°C) & Erz")}
+        };
+
+        subFont.setPointSize(8);
+        painter.setFont(subFont);
+        for (int i = 0; i < entries.size(); ++i) {
+            const double y = height() - 96 + i * 21.0;
+            const QColor c = colorForWagon(entries[i].cat, m_colorMode);
+            painter.setBrush(c);
+            painter.setPen(QPen(Qt::white, 1.0));
+            painter.drawRoundedRect(QRectF(26, y, 22, 13), 2, 2);
+            painter.setPen(QColor("#F8FAFC"));
+            painter.drawText(QRectF(56, y - 2, 325, 17), Qt::AlignLeft | Qt::AlignVCenter, entries[i].text);
+        }
     }
 
-    // Oben-Rechts: Details zum aktuell ausgewählten Zug / Lagerverband
+    // Oben-Rechts: Details zum aktuell ausgewählten Live-Waggon / Verband
     if (m_selectedTrainIdx >= 0 && m_selectedTrainIdx < m_trains.size()) {
         const TrainConsist &tr = m_trains[m_selectedTrainIdx];
-        const QRectF selBox(width() - 355, 14, 341, 124);
-        painter.setBrush(QColor(30, 41, 59, 235));
-        painter.setPen(QPen(tr.hasLocomotive ? QColor("#FBD50E") : QColor("#C084FC"), 1.6));
+        const int wIdx = (m_selectedWagonIdx >= 0 && m_selectedWagonIdx < tr.wagons.size())
+                             ? m_selectedWagonIdx
+                             : (tr.wagons.isEmpty() ? -1 : 0);
+        const QRectF selBox(width() - 375, 14, 361, 146);
+        painter.setBrush(QColor(15, 23, 42, 238));
+        painter.setPen(QPen(tr.providerColor.isValid() ? tr.providerColor : QColor("#38BDF8"), 1.8));
         painter.drawRoundedRect(selBox, 6, 6);
 
         titleFont.setPointSize(9);
         painter.setFont(titleFont);
-        painter.setPen(tr.hasLocomotive ? QColor("#FBD50E") : QColor("#E9D5FF"));
-        painter.drawText(QRectF(width() - 343, 20, 318, 20),
-                         QString("Verband: %1 (%2 Wg. | %3)")
-                             .arg(tr.id).arg(tr.wagons.size())
-                             .arg(tr.hasLocomotive ? QStringLiteral("IN FAHRT") : QStringLiteral("GELAGERT OHNE LOK")));
+        painter.setPen(QColor("#FBD50E"));
+        painter.drawText(QRectF(width() - 363, 20, 338, 20),
+                         QString("📡 [%1] %2 (%3 Wg.)").arg(tr.providerName, tr.id).arg(tr.wagons.size()));
 
         subFont.setPointSize(8);
         painter.setFont(subFont);
-        painter.setPen(QColor("#86EFAC"));
-        painter.drawText(QRectF(width() - 343, 42, 318, 18),
-                         operationStateText(tr));
-        painter.setPen(QColor("#E2E8F0"));
-        painter.drawText(QRectF(width() - 343, 60, 318, 18),
-                         QString("⬆️ Quelle: %1  ->  ⬇️ Senke: %2 (Zyklen: %3)")
-                             .arg(tr.sourceNodeId, tr.sinkNodeId).arg(tr.completedDeliveries));
-
-        if (m_selectedWagonIdx >= 0 && m_selectedWagonIdx < tr.wagons.size()) {
-            const WagonData &w = tr.wagons[m_selectedWagonIdx];
+        if (wIdx >= 0) {
+            const WagonData &w = tr.wagons[wIdx];
             painter.setPen(colorForWagon(w.category, m_colorMode).lighter(135));
-            painter.drawText(QRectF(width() - 343, 80, 318, 18),
-                             QString("Waggon #%1: %2 | UIC %3")
-                                 .arg(w.positionIndex).arg(shortCodeForWagon(w.category), w.uicNumber));
+            painter.drawText(QRectF(width() - 363, 42, 338, 17),
+                             QString("UIC/EVN: %1  |  Bauart: %2 (%3A)")
+                                 .arg(w.uicNumber, w.wagonTypeRaw).arg(w.axleCount));
+
+            painter.setPen(QColor("#86EFAC"));
+            const QString evTxt = !w.lastEventType.isEmpty()
+                                      ? QString("%1 (%2)").arg(w.liveStatusText, w.lastEventType)
+                                      : (w.liveStatusText.isEmpty() ? QStringLiteral("Aktiv (GPS)") : w.liveStatusText);
+            painter.drawText(QRectF(width() - 363, 60, 338, 17),
+                             QString("Status: %1  |  %2 km/h  |  Stand: %3 min")
+                                 .arg(evTxt).arg(w.speedKmh, 0, 'f', 0).arg(w.standingTimeMinutes));
+
+            painter.setPen(QColor("#E2E8F0"));
+            const QString loc = !w.geofenceSite.isEmpty() ? w.geofenceSite
+                                                          : (!w.locationName.isEmpty() ? w.locationName : QStringLiteral("Freie Strecke"));
+            painter.drawText(QRectF(width() - 363, 78, 338, 17),
+                             QString("Ort/Geofence: %1 %2").arg(loc, w.locationCode.isEmpty() ? QString() : QString("[%1]").arg(w.locationCode)));
+
             painter.setPen(QColor("#FDE047"));
-            painter.drawText(QRectF(width() - 343, 98, 318, 18),
-                             QString("Gut: %1 (%2 t)").arg(productName(w.productType)).arg(w.weightTons, 0, 'f', 1));
-        } else {
+            const QString routeTxt = (!w.originName.isEmpty() || !w.destinationName.isEmpty())
+                                         ? QString("Route: %1 -> %2").arg(w.originName, w.destinationName)
+                                         : QString("Gut: %1 (%2 t)").arg(w.cargoDescription).arg(w.weightTons, 0, 'f', 1);
+            painter.drawText(QRectF(width() - 363, 96, 338, 17), routeTxt);
+
+            painter.setPen(QColor("#7DD3FC"));
+            painter.drawText(QRectF(width() - 363, 114, 338, 17),
+                             QString("GPS: %1° N, %2° E (%3)")
+                                 .arg(w.rawGpsLat, 0, 'f', 5).arg(w.rawGpsLon, 0, 'f', 5)
+                                 .arg(w.isSnappedToTrack ? QStringLiteral("Gleis-Snap") : QStringLiteral("Roh-GPS")));
+
             painter.setPen(QColor("#94A3B8"));
-            painter.drawText(QRectF(width() - 343, 86, 318, 18),
-                             QStringLiteral("Klick auf einen Waggon für Einzel- & Güter-Details"));
+            painter.drawText(QRectF(width() - 363, 132, 338, 17),
+                             QString("Zeitstempel: %1 | Quelle: %2")
+                                 .arg(w.timestampIso.isEmpty() ? QStringLiteral("-") : w.timestampIso, w.sourceEndpoint));
         }
     }
 
@@ -3357,9 +3951,13 @@ void RailMapWidget::drawMiniOverviewMap(QPainter &painter)
     }
 
     for (const TrainConsist &tr : m_trains) {
-        painter.setBrush(tr.hasLocomotive ? QColor("#FBD50E") : QColor("#C084FC"));
+        if (tr.wagons.isEmpty()) continue;
+        const double lat = tr.wagons[0].currentLat;
+        const double lon = tr.wagons[0].currentLon;
+        if (lat < minLat || lat > maxLat || lon < minLon || lon > maxLon) continue;
+        painter.setBrush(tr.isLiveGpsGroup ? QColor("#38BDF8") : QColor("#FBD50E"));
         painter.setPen(Qt::NoPen);
-        painter.drawEllipse(toMini(tr.locoLat, tr.locoLon), 2.6, 2.6);
+        painter.drawEllipse(toMini(lat, lon), 2.8, 2.8);
     }
 
     const QPointF camPt = toMini(std::clamp(m_centerLat, minLat, maxLat),
@@ -3443,8 +4041,8 @@ void RailMapWidget::mouseMoveEvent(QMouseEvent *event)
         const double worldSize = 256.0 * std::pow(2.0, m_zoom);
         const double startX = lonToMercX(m_dragStartLon) * worldSize;
         const double startY = latToMercY(m_dragStartLat) * worldSize;
-        m_centerLon = mercXToLon((startX - delta.x()) / worldSize);
-        m_centerLat = std::clamp(mercYToLat((startY - delta.y()) / worldSize), 48.9, 49.7);
+        m_centerLon = std::clamp(mercXToLon((startX - delta.x()) / worldSize), -15.0, 30.0);
+        m_centerLat = std::clamp(mercYToLat((startY - delta.y()) / worldSize), 35.0, 65.0);
         updateAllTrainGeometries();
         update();
     }

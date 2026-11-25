@@ -37,15 +37,15 @@ int main(int argc, char *argv[])
 
     if (!isAutoScreenshot) {
         splash.show();
-        sleepWithEventProcessing(a, 750);
-
-        splash.setPixmap(MainWindowSHSLogistics::createCorporateSplashPixmap(
-            70, QStringLiteral("Lade Quellen, Senken, Güter-Objekte & 1420 °C Torpedopfannenwagen ...")));
-        sleepWithEventProcessing(a, 750);
-
-        splash.setPixmap(MainWindowSHSLogistics::createCorporateSplashPixmap(
-            100, QStringLiteral("Verbinde DB Cargo / SAVVY Telematik-Schnittstelle – Startbereit!")));
         sleepWithEventProcessing(a, 650);
+
+        splash.setPixmap(MainWindowSHSLogistics::createCorporateSplashPixmap(
+            70, QStringLiteral("Lade SHS-Standorte, Werksgleise & Geofence-Bereiche im Saarland ...")));
+        sleepWithEventProcessing(a, 650);
+
+        splash.setPixmap(MainWindowSHSLogistics::createCorporateSplashPixmap(
+            100, QStringLiteral("Alle 6 Telematik-Dienste bereit (link2rail · IMT · DOT · TRANSWAGGON · Innofreight · Wascosa)")));
+        sleepWithEventProcessing(a, 550);
     }
 
     MainWindowSHSLogistics w;

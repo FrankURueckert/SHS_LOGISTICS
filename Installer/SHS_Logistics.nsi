@@ -14,10 +14,10 @@ Unicode true
 
 !define APPNAME   "SHS_Logistics"
 !define APPTITLE  "SHS Logistics GmbH - Werksbahn & Logistik Leitsystem"
-!define APPVER    "0.8"
+!define APPVER    "0.9"
 !define REPO      ".."
 !define RELDIR    "Release_Standalone"
-!define AUTHOR    "Frank U. Rueckert"
+!define AUTHOR    "Frank U. Rueckert & Sevda Dawd"
 !define EMAIL     "frank.rueckert@htwsaar.de"
 
 Name "${APPTITLE} ${APPVER}"
@@ -42,7 +42,7 @@ BrandingText "SHS Logistics GmbH - Partner [schafft Zukunft] Stahl"
 
 !define MUI_ABORTWARNING
 !define MUI_WELCOMEPAGE_TITLE "Willkommen beim Setup von SHS Logistics GmbH (${APPVER})"
-!define MUI_WELCOMEPAGE_TEXT "Dieser Assistent installiert das C++/Qt-6 Werksbahn-, Waggon-, Gueter-, Quellen/Senken- und Bahn-API-Leitsystem der SHS Logistics GmbH ('Partner [schafft Zukunft] Stahl') auf Ihrem Computer.$\r$\n$\r$\nWissenschaftliche Leitung & Entwicklung:$\r$\nFrank U. Rueckert (frank.rueckert@htwsaar.de)$\r$\nhtw saar - Hochschule fuer Technik und Wirtschaft des Saarlandes$\r$\n$\r$\nEnthalten im Release-Paket:$\r$\n- Alleine lauffaehiges Release (SHS_Logistics.exe inkl. Qt 6.9 & Offline-Kartenkacheln)$\r$\n- Alle PDF-Manuals (Technisches Handbuch & Kurzanleitung)$\r$\n- Standorte Voelklingen, Dillinger Huette (1420 Grad C Torpedowagen), Burbach & Neunkirchen"
+!define MUI_WELCOMEPAGE_TEXT "Dieser Assistent installiert das C++/Qt-6 Multi-Telematik Live-GPS-Leitsystem der SHS Logistics GmbH ('Partner [schafft Zukunft] Stahl') auf Ihrem Computer.$\r$\n$\r$\nWissenschaftliche Leitung & Entwicklung:$\r$\nFrank U. Rueckert (frank.rueckert@htwsaar.de)$\r$\nEntwicklerin: Sevda Dawd (sevdasdawd@gmail.com)$\r$\nhtw saar - Hochschule fuer Technik und Wirtschaft des Saarlandes$\r$\n$\r$\nEnthalten im Release-Paket (Version ${APPVER}):$\r$\n- 6 Telematik-Dienste (link2rail, IMT, DOT, TRANSWAGGON, Innofreight, Wascosa)$\r$\n- Alleine lauffaehiges Release (SHS_Logistics.exe inkl. Qt 6.9 & Kartenkacheln)$\r$\n- Alle PDF-Manuals (Technisches Handbuch & Kurzanleitung)"
 
 !define MUI_FINISHPAGE_RUN "$INSTDIR\SHS_Logistics.exe"
 !define MUI_FINISHPAGE_RUN_TEXT "SHS Logistics Leitsystem jetzt starten"
@@ -84,7 +84,7 @@ Function ShsPreviewPageCreate
   Pop $PreviewImageCtrl
   ${NSD_SetImage} $PreviewImageCtrl "$PLUGINSDIR\nsis_startseite_banner.bmp" $PreviewBmpHandle
 
-  ${NSD_CreateLabel} 8u 124u 284u 18u "Leitung: Frank U. Rueckert (frank.rueckert@htwsaar.de) | htw saar in Kooperation mit SHS Logistics GmbH"
+  ${NSD_CreateLabel} 8u 124u 284u 22u "Leitung: Frank U. Rueckert (frank.rueckert@htwsaar.de) | Entwicklung: Sevda Dawd (sevdasdawd@gmail.com) - htw saar / SHS Logistics GmbH"
   Pop $0
 
   nsDialogs::Show
@@ -130,7 +130,7 @@ Section "SHS Logistics Leitsystem (Release & PDF-Manuals)" SecMain
   WriteRegStr HKCU "Software\${APPNAME}" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "DisplayName" "${APPTITLE}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "DisplayVersion" "${APPVER}"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "Publisher" "SHS Logistics GmbH / Frank U. Rueckert (frank.rueckert@htwsaar.de)"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "Publisher" "SHS Logistics GmbH / Frank U. Rueckert & Sevda Dawd"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "Contact" "${EMAIL}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "HelpLink" "mailto:${EMAIL}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "DisplayIcon" "$INSTDIR\Installer\SHS_Icon.ico"

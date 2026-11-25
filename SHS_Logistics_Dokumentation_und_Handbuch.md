@@ -1,9 +1,9 @@
 # SHS Logistics GmbH – Technisches Handbuch & GUI-Bedienungsanleitung
 
-**Projekt:** `SHS_LOGISTICS` – Interaktives 2D-Werksbahn-, Waggon-, Güter-, Quellen/Senken- & Bahn-API-Leitsystem  
-**Software-Version:** **0.8**  
-**Wissenschaftliche Leitung & Software-Entwicklung:** **Frank U. Rückert**  
-**Kontakt / E-Mail:** [`frank.rueckert@htwsaar.de`](mailto:frank.rueckert@htwsaar.de)  
+**Projekt:** `SHS_LOGISTICS` – Interaktives 2D-Werksbahn-, Waggon- & Multi-Telematik Live-GPS-Leitsystem (6 Portale: DB link2rail, Intermodal Telematics, DOT Telematik, TRANSWAGGON, Innofreight OS, Wascosa)  
+**Software-Version:** **0.9 (Multi-Telematik Live-GPS Edition)**  
+**Wissenschaftliche Leitung & Software-Entwicklung:** **Frank U. Rückert** ([`frank.rueckert@htwsaar.de`](mailto:frank.rueckert@htwsaar.de))  
+**Entwicklerin:** **Sevda Dawd** ([`sevdasdawd@gmail.com`](mailto:sevdasdawd@gmail.com))  
 **Institution:** htw saar – Hochschule für Technik und Wirtschaft des Saarlandes (Fakultät für Ingenieurwissenschaften)  
 **Kooperationspartner & Corporate Design:** SHS Logistics GmbH (Stahl-Holding-Saar), Werkstraße 1, 66763 Dillingen/Saar – *„Partner [schafft Zukunft] Stahl“*  
 **Technologie-Stack:** C++17, Qt 6.9.0 (`Qt6::Widgets`, `Qt6::Network`, `Qt6::PrintSupport`), MinGW 13.1.0 64-Bit, CMake + Ninja, Nullsoft NSIS 3.13 (Installer `setup_SHS_Logistics.exe`)
@@ -272,16 +272,17 @@ In diesem Tab verwalten Sie den Lokomotiv-Pool, die 10 Quellen & Senken sowie di
 
 | Tastenkürzel | Funktion im Programm |
 | :---: | :--- |
+| **`Strg + L`** | **DB Cargo link2rail Anmeldung & Endpunkt-Konfiguration** öffnen |
+| **`F9`** | **Live-GPS-Abruf:** Alle Waggon-Positionen jetzt über link2rail abrufen |
 | **`F1`** | Kamera-Zoom auf **Saarstahl Werk Völklingen** (Hauptfokus) |
-| **`F2`** | Kamera-Zoom auf **Dillinger Hütte & ROGESA** (Roheisen, Brammen, Grobbleche) |
+| **`F2`** | Kamera-Zoom auf **Dillinger Hütte & ROGESA** |
 | **`F3`** | Kamera-Zoom auf **Saarstahl Werk Burbach** (Drahtwerk) |
 | **`F4`** | Kamera-Zoom auf **Saarstahl Werk Neunkirchen** (Walzwerk) |
 | **`F5`** | Kamera-Zoom auf **Gesamtübersicht Saarland-Korridor** |
-| **`Leertaste`** | **Eisenbahnsimulation Start / Pause** |
-| **Mausrad** | Karte **hinein- / herauszoomen** |
-| **`F8`** | **Test-Modus:** Alle Züge zufällig auf den Gleisen positionieren |
-| **`F9`** | **Bahn-API Sync:** Waggon-Positionen jetzt über DB-API abrufen |
-| **`F10`** | **PDF-Handbuch öffnen:** Öffnet `SHS_Logistics_Handbuch_und_Projektbeschreibung.pdf` im Standard-PDF-Viewer |
+| **`F6`** | Kamera-Zoom auf **Deutschland-Übersicht** (bundesweite GPS-Waggons) |
+| **`F7`** | **Alle link2rail Live-Waggons einpassen** (automatischer GPS-Zoom) |
+| **Mausrad** | Karte **hinein- / herauszoomen** (Zoom 5.0 bis 18.5) |
+| **`F10`** | **PDF-Handbuch öffnen:** Öffnet `SHS_Logistics_Handbuch_und_Projektbeschreibung.pdf` |
 | **`F11`** | **Kurzanleitung öffnen:** Öffnet `SHS_Logistics_Kurzanleitung_und_Schnellstart.pdf` |
 | **`Strg + P`** | Aktuelle 2D-Karten- und Gleisansicht **drucken / als PDF ausgeben** |
 | **`Strg + Q`** | Anwendung beenden |
@@ -355,10 +356,11 @@ setup_SHS_Logistics.exe /S /D=C:\Programme\SHS_Logistics
 
 | Rolle / Funktion | Person & Kontaktdaten | Institution / Unternehmen |
 | :--- | :--- | :--- |
-| **Wissenschaftliche Leitung & Gesamtentwicklung** | **Frank U. Rückert**<br>E-Mail: **`frank.rueckert@htwsaar.de`** | **htw saar** – Hochschule für Technik und Wirtschaft des Saarlandes<br>Fakultät für Ingenieurwissenschaften |
+| **Wissenschaftliche Leitung & Entwicklung** | **Frank U. Rückert**<br>E-Mail: **`frank.rueckert@htwsaar.de`** | **htw saar** – Hochschule für Technik und Wirtschaft des Saarlandes<br>Fakultät für Ingenieurwissenschaften |
+| **Entwicklerin** | **Sevda Dawd**<br>E-Mail: **`sevdasdawd@gmail.com`** | **htw saar** – Software-Entwicklung & Telematik-Integration |
 | **Anwendungsdomäne & Werksbahn-Logistik** | **SHS Logistics GmbH**<br>Stahl-Holding-Saar | Standorte: Völklingen (Saarstahl AG), Dillingen (Dillinger Hütte / ROGESA), Burbach, Neunkirchen |
 | **Technologie-Stack** | C++17, Qt 6.9.0 (Widgets, Network, PrintSupport)<br>MinGW 13.1.0 64-Bit, CMake, Ninja, Nullsoft NSIS 3.13 | High-Performance 2D-Rendering, DB-Cargo-Telematik-API, Web-Mercator-Projektion |
 
 ---
-*Stand des Handbuchs: Software-Version 0.8 (November 2026)*
+*Stand des Handbuchs: Software-Version 0.9 – link2rail Live-GPS Edition (November 2026)*
 *Erstellt für die SHS Logistics GmbH und die Hochschule für Technik und Wirtschaft des Saarlandes (htw saar).*

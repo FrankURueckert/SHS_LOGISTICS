@@ -8,6 +8,9 @@
 #include <QSplitter>
 #include <QHeaderView>
 #include <QMessageBox>
+#include <QFileDialog>
+#include <QClipboard>
+#include <QApplication>
 #include <QPrinter>
 #include <QPrintDialog>
 #include <QPainter>
@@ -23,11 +26,25 @@
 #include <QCoreApplication>
 #include <QDialog>
 #include <QTextDocument>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QDateTime>
+#include <QHash>
 #include <algorithm>
 
 #ifndef SHS_APP_VERSION
-#define SHS_APP_VERSION "0.8"
+#define SHS_APP_VERSION "0.9"
 #endif
+
+namespace {
+QString normalizeEvnForMerge(const QString &evn)
+{
+    QString s = evn.trimmed().toUpper();
+    s.remove(' ');
+    s.remove('-');
+    return s;
+}
+} // namespace
 
 MainWindowSHSLogistics::MainWindowSHSLogistics(QWidget *parent)
     : QMainWindow(parent)
@@ -35,24 +52,32 @@ MainWindowSHSLogistics::MainWindowSHSLogistics(QWidget *parent)
 {
     ui->setupUi(this);
 
-    // Titelleiste inkl. Versionsnummer
-    setWindowTitle(QStringLiteral("SHS Logistics GmbH – Werksbahn-, Waggon- & Logistik-Leitsystem  |  Version %1")
+    setWindowTitle(QStringLiteral("SHS Logistics GmbH – Multi-Telematik Live-GPS-Leitsystem (6 Portale)  |  Version %1")
                        .arg(QStringLiteral(SHS_APP_VERSION)));
+
+    // Alle 6 unabhängigen Telematik-Clients anlegen:
+    // 1. DB Cargo link2rail, 2. Intermodal Telematics (IMT), 3. DOT Telematik,
+    // 4. TRANSWAGGON (WOPS), 5. Innofreight OS, 6. Wascosa
+    const auto providers = Link2RailClient::allProviders();
+    for (const auto &pi : providers) {
+        auto *client = new Link2RailClient(pi.id, this);
+        m_clients.append(client);
+        connect(client, &Link2RailClient::authenticationChanged,
+                this, &MainWindowSHSLogistics::onAnyProviderAuthChanged);
+        connect(client, &Link2RailClient::liveDataUpdated,
+                this, &MainWindowSHSLogistics::onAnyProviderDataUpdated);
+    }
 
     setupCorporateTheme();
     buildMainLayout();
     setupMenuBar();
 
-    m_apiPollTimer = new QTimer(this);
-    m_apiPollTimer->setInterval(5000);
-    connect(m_apiPollTimer, &QTimer::timeout, this, &MainWindowSHSLogistics::onQueryDbApiClicked);
-
-    refreshTrainSelectorAndControls();
-    refreshWagonTable();
-    refreshSourcesSinksAndCargoTables();
+    refreshLiveWagonTable();
+    refreshNodesTable();
+    updateHeaderAndConnectionUi();
 
     statusBar()->showMessage(
-        QStringLiteral("SHS Logistics GmbH – Leitsystem bereit. Hauptansicht: Werk Völklingen (Saarstahl AG) mit Quellen, Senken, Güter-Objekten & Lokomotiv-Pool."));
+        QStringLiteral("SHS Logistics Multi-Telematik-Leitsystem bereit (6 Dienste: DB link2rail, IMT, DOT, TRANSWAGGON, Innofreight, Wascosa)."));
 }
 
 MainWindowSHSLogistics::~MainWindowSHSLogistics()
@@ -124,9 +149,9 @@ void MainWindowSHSLogistics::setupCorporateTheme()
             background-color: #48555F;
             color: #FFFFFF;
             font-family: Verdana, Segoe UI, Arial;
-            font-size: 10.5px;
+            font-size: 10px;
             font-weight: bold;
-            padding: 7px 9px;
+            padding: 6px 8px;
             margin-right: 2px;
             border-top-left-radius: 4px;
             border-top-right-radius: 4px;
@@ -146,7 +171,7 @@ void MainWindowSHSLogistics::setupCorporateTheme()
             border-radius: 4px;
             padding: 5px 9px;
             font-family: Verdana, Segoe UI, Arial;
-            font-size: 10.5px;
+            font-size: 10px;
             font-weight: bold;
         }
         QPushButton:hover {
@@ -156,6 +181,10 @@ void MainWindowSHSLogistics::setupCorporateTheme()
         }
         QPushButton:pressed {
             background-color: #2F3940;
+        }
+        QPushButton:disabled {
+            background-color: #94A3B8;
+            color: #E2E8F0;
         }
         QComboBox, QSpinBox, QLineEdit {
             background-color: #FFFFFF;
@@ -231,10 +260,11 @@ void MainWindowSHSLogistics::buildMainLayout()
         QStringLiteral("Partner <span style='color:#5C839C;font-weight:bold;'>[</span>"
                        "schafft <i>Zukunft</i>"
                        "<span style='color:#EF7D00;font-weight:bold;'>]</span> Stahl "
-                       "— Quellen, Senken, Güter-Disposition &amp; Werksbahn-Simulation"),
+                       "— Multi-Telematik Live-GPS-Leitsystem &nbsp;|&nbsp; "
+                       "<span style='color:#0369A1;font-weight:bold;'>Entwicklung: Frank U. Rückert &amp; Sevda Dawd</span>"),
         headerFrame);
     lblSlogan->setStyleSheet(
-        "font-family: Verdana, Arial; font-size: 11px; color: #334155; border: none; background: transparent;");
+        "font-family: Verdana, Arial; font-size: 10.5px; color: #334155; border: none; background: transparent;");
     titleBox->addWidget(lblCompany);
     titleBox->addWidget(lblSlogan);
     headerLayout->addLayout(titleBox);
@@ -250,7 +280,7 @@ void MainWindowSHSLogistics::buildMainLayout()
     rootLayout->addWidget(headerFrame);
 
     // =========================================================================
-    // 2. SCHNELLWAHL-LEISTE (Standort-Zoom & Schnell-Aktionen)
+    // 2. SCHNELLWAHL-LEISTE (Standort-Zoom & Multi-Dienst Live-Aktionen)
     // =========================================================================
     auto *navBar = new QFrame(root);
     navBar->setStyleSheet(
@@ -271,474 +301,320 @@ void MainWindowSHSLogistics::buildMainLayout()
         return btn;
     };
 
-    auto *btnZoomVK  = makeNavBtn(QStringLiteral("🏭 WERK VÖLKLINGEN (Saarstahl)"), QStringLiteral("#EF7D00"));
-    auto *btnZoomDL  = makeNavBtn(QStringLiteral("🔥 DILLINGER HÜTTE (Roheisen/Blech)"));
-    auto *btnZoomBB  = makeNavBtn(QStringLiteral("⚙️ WERK BURBACH (Draht)"));
-    auto *btnZoomNK  = makeNavBtn(QStringLiteral("🔩 WERK NEUNKIRCHEN"));
-    auto *btnZoomAll = makeNavBtn(QStringLiteral("🗺️ ALLE STANDORTE"));
+    auto *btnZoomVK  = makeNavBtn(QStringLiteral("🏭 VÖLKLINGEN"), QStringLiteral("#EF7D00"));
+    auto *btnZoomDL  = makeNavBtn(QStringLiteral("🔥 DILLINGEN"));
+    auto *btnZoomBB  = makeNavBtn(QStringLiteral("⚙️ BURBACH"));
+    auto *btnZoomNK  = makeNavBtn(QStringLiteral("🔩 NEUNKIRCHEN"));
+    auto *btnZoomSL  = makeNavBtn(QStringLiteral("🗺️ SAARLAND"));
+    auto *btnZoomDE  = makeNavBtn(QStringLiteral("🇩🇪 DEUTSCHLAND"));
+    auto *btnZoomFit = makeNavBtn(QStringLiteral("🎯 ALLE LIVE-WAGGONS"), QStringLiteral("#0284C7"));
 
-    navLayout->addSpacing(8);
+    navLayout->addStretch(1);
 
-    m_btnPlayPause           = makeNavBtn(QStringLiteral("⏸ Simulation Pause"), QStringLiteral("#0284C7"));
-    auto *btnQuickAddSamms   = makeNavBtn(QStringLiteral("➕ Samms (6A)"), QStringLiteral("#EA580C"));
-    auto *btnQuickAddRnsz    = makeNavBtn(QStringLiteral("➕ Rns-z (4A)"), QStringLiteral("#0284C7"));
-    auto *btnQuickAddTorpedo = makeNavBtn(QStringLiteral("🔥 + Torpedo (Flüssigeisen)"), QStringLiteral("#E11D48"));
-    auto *btnQuickRemove     = makeNavBtn(QStringLiteral("➖ Waggon ab"));
-    auto *btnQuickRandom     = makeNavBtn(QStringLiteral("🎲 Zufalls-Pos."));
-    auto *btnQuickDbApi      = makeNavBtn(QStringLiteral("📡 DB-API Ortung"), QStringLiteral("#0D9488"));
+    m_btnToolbarLogins  = makeNavBtn(QStringLiteral("🔐 Dienste && Logins (0/6)"), QStringLiteral("#DC2626"));
+    m_btnToolbarSyncAll = makeNavBtn(QStringLiteral("🔄 Alle Dienste abrufen"), QStringLiteral("#0D9488"));
+    auto *btnQuickImp   = makeNavBtn(QStringLiteral("📂 Datei laden"));
 
     rootLayout->addWidget(navBar);
 
     // =========================================================================
-    // 3. HAUPTBEREICH: LINKS 4 STEUER-TABS + MITTE GROSSER KARTEN- & SIMULATIONS-SCREEN
+    // 3. HAUPTBEREICH: LINKS 4 HAUPT-TABS (INKL. 6 LOGIN-REITERN) + MITTE 2D-KARTE
     // =========================================================================
     auto *mainSplitter = new QSplitter(Qt::Horizontal, root);
     mainSplitter->setHandleWidth(6);
 
-    // Zuerst das Map-Widget anlegen, damit Quellen/Senken für die ComboBoxen bereitstehen
     m_mapWidget = new RailMapWidget();
 
     m_sideTabs = new QTabWidget(mainSplitter);
-    // Breit genug, damit Tab-Titel, Button-Beschriftungen und Tabellen nicht abgeschnitten werden
-    m_sideTabs->setMinimumWidth(560);
-    m_sideTabs->setMaximumWidth(760);
+    m_sideTabs->setMinimumWidth(590);
+    m_sideTabs->setMaximumWidth(820);
 
     // -------------------------------------------------------------------------
-    // TAB 1: ZÜGE, ZUGLÄNGE & WAGGONS (Samms / Rns-z / 4A / 6A + Geladenes Gut)
+    // TAB 1: ALLE LIVE-WAGGONS (VEREINIGTE ANSICHT ALLER 6 DIENSTE)
     // -------------------------------------------------------------------------
-    auto *tabTrains = new QWidget();
-    auto *tabTrainsLayout = new QVBoxLayout(tabTrains);
-    tabTrainsLayout->setContentsMargins(7, 7, 7, 7);
-    tabTrainsLayout->setSpacing(6);
+    auto *tabLive = new QWidget();
+    auto *tabLiveLay = new QVBoxLayout(tabLive);
+    tabLiveLay->setContentsMargins(8, 8, 8, 8);
+    tabLiveLay->setSpacing(8);
 
-    auto *grpTrainSelect = new QGroupBox(QStringLiteral("1. Zugverband / Gelagerte Waggongruppe && Route"), tabTrains);
-    auto *grpTrainLayout = new QGridLayout(grpTrainSelect);
+    m_bannerNotLoggedIn = new QFrame(tabLive);
+    m_bannerNotLoggedIn->setStyleSheet(
+        "QFrame { background-color: #FEF3C7; border: 1.5px solid #D97706; border-radius: 5px; }");
+    auto *bannerLay = new QHBoxLayout(m_bannerNotLoggedIn);
+    bannerLay->setContentsMargins(8, 6, 8, 6);
+    auto *lblBanner = new QLabel(
+        QStringLiteral("<b style='color:#92400E;'>Multi-Telematik Live-Betrieb (6 Portale auf einer Karte):</b><br>"
+                       "<span style='color:#78350F; font-size:10px;'>Melde dich im Tab '🔐 Dienste &amp; Logins' bei einem oder mehreren Diensten an (link2rail, IMT, DOT, TRANSWAGGON, Innofreight, Wascosa).</span>"),
+        m_bannerNotLoggedIn);
+    lblBanner->setWordWrap(true);
+    lblBanner->setStyleSheet("border:none; background:transparent;");
+    auto *btnBannerLogin = new QPushButton(QStringLiteral("🔐 Zu den Logins"), m_bannerNotLoggedIn);
+    btnBannerLogin->setStyleSheet("background-color: #0D9488; color: white; padding: 6px 12px;");
+    bannerLay->addWidget(lblBanner, 1);
+    bannerLay->addWidget(btnBannerLogin);
+    tabLiveLay->addWidget(m_bannerNotLoggedIn);
 
-    grpTrainLayout->addWidget(new QLabel(QStringLiteral("Verband wählen:")), 0, 0);
-    m_comboTrain = new QComboBox(grpTrainSelect);
-    grpTrainLayout->addWidget(m_comboTrain, 0, 1, 1, 2);
+    auto *grpFilter = new QGroupBox(QStringLiteral("1. Alle Live-Waggons filtern && optisch unterscheiden"), tabLive);
+    auto *gFilt = new QGridLayout(grpFilter);
 
-    grpTrainLayout->addWidget(new QLabel(QStringLiteral("Gleisabschnitt:")), 1, 0);
-    m_comboTrackAssign = new QComboBox(grpTrainSelect);
-    grpTrainLayout->addWidget(m_comboTrackAssign, 1, 1);
+    gFilt->addWidget(new QLabel(QStringLiteral("Telematik-Dienst:")), 0, 0);
+    m_comboProviderFilter = new QComboBox(grpFilter);
+    m_comboProviderFilter->addItem(QStringLiteral("Alle 6 Telematik-Dienste gemeinsam anzeigen"), QString());
+    for (const auto &pi : Link2RailClient::allProviders()) {
+        m_comboProviderFilter->addItem(pi.displayName, pi.key);
+    }
+    gFilt->addWidget(m_comboProviderFilter, 0, 1);
 
-    auto *btnReverse = new QPushButton(QStringLiteral("⇄ Richtung wenden"), grpTrainSelect);
-    grpTrainLayout->addWidget(btnReverse, 1, 2);
+    gFilt->addWidget(new QLabel(QStringLiteral("Suche (EVN/Zug/Ort):")), 1, 0);
+    m_editSearchFilter = new QLineEdit(grpFilter);
+    m_editSearchFilter->setPlaceholderText(QStringLiteral("z. B. 31804891..., Samms, Völklingen, Wascosa ..."));
+    gFilt->addWidget(m_editSearchFilter, 1, 1);
 
-    // Lok an-/abkuppeln (für Lagerung von Waggons ohne Lok)
-    auto *btnCoupleLoco1 = new QPushButton(QStringLiteral("🚂 Freie Lok ankuppeln (Start)"), grpTrainSelect);
-    btnCoupleLoco1->setStyleSheet("background-color: #059669; color: white;");
-    auto *btnUncoupleLoco1 = new QPushButton(QStringLiteral("🅿️ Lok abkuppeln (Waggons lagern)"), grpTrainSelect);
-    btnUncoupleLoco1->setStyleSheet("background-color: #7E22CE; color: white;");
-    grpTrainLayout->addWidget(btnCoupleLoco1,   2, 0, 1, 2);
-    grpTrainLayout->addWidget(btnUncoupleLoco1, 2, 2, 1, 1);
+    gFilt->addWidget(new QLabel(QStringLiteral("Bauart-Filter:")), 2, 0);
+    m_comboCategoryFilter = new QComboBox(grpFilter);
+    m_comboCategoryFilter->addItem(QStringLiteral("Alle Bauarten anzeigen"));
+    m_comboCategoryFilter->addItem(QStringLiteral("Samms [6-Achser]"));
+    m_comboCategoryFilter->addItem(QStringLiteral("Rns-z [4-Achser]"));
+    m_comboCategoryFilter->addItem(QStringLiteral("4-Achser Shimmns / Eaos"));
+    m_comboCategoryFilter->addItem(QStringLiteral("6-Achser Torpedo / Faals"));
+    gFilt->addWidget(m_comboCategoryFilter, 2, 1);
 
-    m_lblTrainSummary = new QLabel(grpTrainSelect);
-    m_lblTrainSummary->setStyleSheet("color: #0F172A; font-weight: bold; font-size: 10.5px; padding: 2px;");
-    m_lblTrainSummary->setWordWrap(true);
-    grpTrainLayout->addWidget(m_lblTrainSummary, 3, 0, 1, 3);
-
-    tabTrainsLayout->addWidget(grpTrainSelect);
-
-    // Gruppe B: Zug verlängern / verkürzen
-    auto *grpLength = new QGroupBox(QStringLiteral("2. Zug verlängern / verkürzen (Waggon-Steuerung)"), tabTrains);
-    auto *grpLenLayout = new QGridLayout(grpLength);
-    grpLenLayout->setColumnStretch(0, 1);
-    grpLenLayout->setColumnStretch(1, 1);
-
-    auto *lenTopRow = new QHBoxLayout();
-    lenTopRow->addWidget(new QLabel(QStringLiteral("Zuglänge (Waggons):")));
-    m_spinWagonCount = new QSpinBox(grpLength);
-    m_spinWagonCount->setRange(1, 30);
-    m_spinWagonCount->setSuffix(QStringLiteral(" Waggons"));
-    lenTopRow->addWidget(m_spinWagonCount);
-    auto *btnRemoveLast = new QPushButton(QStringLiteral("➖ Letzten Waggon abhängen"), grpLength);
-    btnRemoveLast->setStyleSheet("background-color: #B91C1C; color: white;");
-    lenTopRow->addWidget(btnRemoveLast, 1);
-    grpLenLayout->addLayout(lenTopRow, 0, 0, 1, 2);
-
-    auto *btnAddSamms = new QPushButton(QStringLiteral("➕ Samms [6-Achser] anhängen"), grpLength);
-    btnAddSamms->setStyleSheet("background-color: #EF7D00; color: white;");
-    auto *btnAddRnsz = new QPushButton(QStringLiteral("➕ Rns-z [4-Achser] anhängen"), grpLength);
-    btnAddRnsz->setStyleSheet("background-color: #0284C7; color: white;");
-    auto *btnAdd4A = new QPushButton(QStringLiteral("➕ 4-Achser (Draht-Coils) anhängen"), grpLength);
-    btnAdd4A->setStyleSheet("background-color: #10B981; color: white;");
-    auto *btnAdd6A = new QPushButton(QStringLiteral("🔥 + Torpedowagen (Flüssigeisen)"), grpLength);
-    btnAdd6A->setStyleSheet("background-color: #E11D48; color: white;");
-
-    grpLenLayout->addWidget(btnAddSamms, 1, 0);
-    grpLenLayout->addWidget(btnAddRnsz,  1, 1);
-    grpLenLayout->addWidget(btnAdd4A,    2, 0);
-    grpLenLayout->addWidget(btnAdd6A,    2, 1);
-
-    tabTrainsLayout->addWidget(grpLength);
-
-    // Gruppe C: Waggon-Positionsliste inkl. geladenem Stahlprodukt
-    auto *grpWagons = new QGroupBox(
-        QStringLiteral("3. Waggon-Positionen && geladene Güter (Samms / Rns-z / 4A / 6A)"), tabTrains);
-    auto *grpWagonsLayout = new QVBoxLayout(grpWagons);
-
-    auto *colorRow = new QHBoxLayout();
-    colorRow->addWidget(new QLabel(QStringLiteral("Farbmodus:")));
-    m_comboColorMode = new QComboBox(grpWagons);
+    gFilt->addWidget(new QLabel(QStringLiteral("Karten-Farbmodus:")), 3, 0);
+    m_comboColorMode = new QComboBox(grpFilter);
     m_comboColorMode->addItem(QStringLiteral("Alle 4 Bauarten getrennt (Samms=Orange, Rns-z=Blau, 4A=Grün, 6A=Rot)"));
     m_comboColorMode->addItem(QStringLiteral("Fokus Bauart: Samms vs. Rns-z hervorheben"));
     m_comboColorMode->addItem(QStringLiteral("Strikt nach Achsen: Alle 4-Achser (Blau) vs. Alle 6-Achser (Orange)"));
-    colorRow->addWidget(m_comboColorMode, 1);
-    grpWagonsLayout->addLayout(colorRow);
+    m_comboColorMode->addItem(QStringLiteral("Nach Telematik-Dienst färben (link2rail / IMT / DOT / TRANSWAGGON / Innofreight / Wascosa)"));
+    gFilt->addWidget(m_comboColorMode, 3, 1);
 
-    m_tableWagons = new QTableWidget(0, 6, grpWagons);
-    m_tableWagons->setHorizontalHeaderLabels({
-        QStringLiteral("Pos."),
+    m_lblLiveSummary = new QLabel(QStringLiteral("Keine Live-Daten geladen."), grpFilter);
+    m_lblLiveSummary->setStyleSheet("color: #334155; font-size: 10px;");
+    gFilt->addWidget(m_lblLiveSummary, 4, 0, 1, 2);
+    tabLiveLay->addWidget(grpFilter);
+
+    auto *grpTable = new QGroupBox(QStringLiteral("2. Vereinigte Live-Waggon-Liste aller Dienste (Klick = Auswählen, Doppelklick = GPS-Zoom)"), tabLive);
+    auto *tLay = new QVBoxLayout(grpTable);
+
+    m_tableLiveWagons = new QTableWidget(0, 8, grpTable);
+    m_tableLiveWagons->setHorizontalHeaderLabels({
+        QStringLiteral("Dienst"),
+        QStringLiteral("UIC / EVN"),
+        QStringLiteral("Zug / Sendung"),
         QStringLiteral("Bauart"),
-        QStringLiteral("Achsen"),
-        QStringLiteral("Geladenes Gut (Produkt)"),
-        QStringLiteral("Gewicht"),
-        QStringLiteral("GPS / UIC")
+        QStringLiteral("Status / Event"),
+        QStringLiteral("Ort / Geofence"),
+        QStringLiteral("GPS (Lat, Lon)"),
+        QStringLiteral("Zeitstempel")
     });
-    m_tableWagons->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_tableWagons->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_tableWagons->setAlternatingRowColors(true);
-    m_tableWagons->verticalHeader()->setVisible(false);
-    m_tableWagons->horizontalHeader()->setStretchLastSection(true);
-    m_tableWagons->setColumnWidth(0, 38);
-    m_tableWagons->setColumnWidth(1, 86);
-    m_tableWagons->setColumnWidth(2, 54);
-    m_tableWagons->setColumnWidth(3, 150);
-    m_tableWagons->setColumnWidth(4, 54);
-    grpWagonsLayout->addWidget(m_tableWagons, 1);
+    m_tableLiveWagons->setAlternatingRowColors(true);
+    m_tableLiveWagons->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_tableLiveWagons->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_tableLiveWagons->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_tableLiveWagons->verticalHeader()->setVisible(false);
+    m_tableLiveWagons->horizontalHeader()->setStretchLastSection(true);
+    m_tableLiveWagons->setColumnWidth(0, 96);
+    m_tableLiveWagons->setColumnWidth(1, 114);
+    m_tableLiveWagons->setColumnWidth(2, 82);
+    m_tableLiveWagons->setColumnWidth(3, 72);
+    m_tableLiveWagons->setColumnWidth(4, 92);
+    m_tableLiveWagons->setColumnWidth(5, 102);
+    m_tableLiveWagons->setColumnWidth(6, 104);
+    tLay->addWidget(m_tableLiveWagons, 2);
 
-    auto *editWagonRow = new QGridLayout();
-    editWagonRow->addWidget(new QLabel(QStringLiteral("Waggon-Bauart:")), 0, 0);
-    m_comboEditWagonType = new QComboBox(grpWagons);
-    m_comboEditWagonType->addItem(QStringLiteral("Samms (6-Achser Schwerlast)"));
-    m_comboEditWagonType->addItem(QStringLiteral("Rns-z (4-Achser Rungenwagen)"));
-    m_comboEditWagonType->addItem(QStringLiteral("4-Achser (Shimmns Coilwagen)"));
-    m_comboEditWagonType->addItem(QStringLiteral("6-Achser (Torpedo / Faals)"));
-    editWagonRow->addWidget(m_comboEditWagonType, 0, 1);
-
-    editWagonRow->addWidget(new QLabel(QStringLiteral("Beladung (Gut):")), 1, 0);
-    m_comboEditWagonProduct = new QComboBox(grpWagons);
-    for (int p = 0; p <= static_cast<int>(CargoProductType::EmptyWagon); ++p) {
-        m_comboEditWagonProduct->addItem(RailMapWidget::productName(static_cast<CargoProductType>(p)));
-    }
-    editWagonRow->addWidget(m_comboEditWagonProduct, 1, 1);
-
-    auto *btnApplyWagonType = new QPushButton(QStringLiteral("Waggon && Gut setzen"), grpWagons);
-    btnApplyWagonType->setStyleSheet("background-color: #EF7D00; color: white;");
-    auto *btnZoomSelectedWagon = new QPushButton(QStringLiteral("🔍 Auf Waggon zoomen"), grpWagons);
+    auto *wActionRow = new QHBoxLayout();
+    auto *btnZoomSelectedWagon = new QPushButton(QStringLiteral("🔍 Auf Waggon zoomen"), grpTable);
     btnZoomSelectedWagon->setStyleSheet("background-color: #0284C7; color: white;");
-    editWagonRow->addWidget(btnApplyWagonType,    0, 2);
-    editWagonRow->addWidget(btnZoomSelectedWagon, 1, 2);
-    grpWagonsLayout->addLayout(editWagonRow);
+    auto *btnFitAllTab1 = new QPushButton(QStringLiteral("🎯 Alle GPS-Waggons zeigen"), grpTable);
+    auto *btnCopyJson = new QPushButton(QStringLiteral("📋 Waggon-JSON kopieren"), grpTable);
+    wActionRow->addWidget(btnZoomSelectedWagon);
+    wActionRow->addWidget(btnFitAllTab1);
+    wActionRow->addWidget(btnCopyJson);
+    tLay->addLayout(wActionRow);
+    tabLiveLay->addWidget(grpTable, 2);
 
-    tabTrainsLayout->addWidget(grpWagons, 1);
-    m_sideTabs->addTab(tabTrains, QStringLiteral("🚂 Züge && Waggons"));
+    auto *grpDetails = new QGroupBox(QStringLiteral("3. Alle übernommenen API-Felder (ausgewählter Waggon)"), tabLive);
+    auto *detLay = new QVBoxLayout(grpDetails);
+    m_tableWagonDetails = new QTableWidget(0, 2, grpDetails);
+    m_tableWagonDetails->setHorizontalHeaderLabels({QStringLiteral("API-Feld / Attribut"), QStringLiteral("Wert aus Telematik-Dienst")});
+    m_tableWagonDetails->setAlternatingRowColors(true);
+    m_tableWagonDetails->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_tableWagonDetails->verticalHeader()->setVisible(false);
+    m_tableWagonDetails->horizontalHeader()->setStretchLastSection(true);
+    m_tableWagonDetails->setColumnWidth(0, 210);
+    detLay->addWidget(m_tableWagonDetails);
+    tabLiveLay->addWidget(grpDetails, 1);
+
+    m_sideTabs->addTab(tabLive, QStringLiteral("📡 Live-Waggons"));
 
     // -------------------------------------------------------------------------
-    // TAB 2: GÜTER-OBJEKTE, QUELLEN/SENKEN & LOKOMOTIV-ENGPASS
+    // TAB 2: DIENSTE & LOGINS — 6 EIGENE LOGIN-REITER (EIN REITER PRO DIENST!)
     // -------------------------------------------------------------------------
-    auto *tabGoods = new QWidget();
-    auto *tabGoodsLayout = new QVBoxLayout(tabGoods);
-    tabGoodsLayout->setContentsMargins(7, 7, 7, 7);
-    tabGoodsLayout->setSpacing(6);
+    auto *tabLogins = new QWidget();
+    auto *tabLoginsLay = new QVBoxLayout(tabLogins);
+    tabLoginsLay->setContentsMargins(6, 6, 6, 6);
+    tabLoginsLay->setSpacing(6);
 
-    // Gruppe 1: Lokomotiv-Pool & Engpass-Steuerung (Waggons ohne Lok lagern!)
-    auto *grpLocoPool = new QGroupBox(
-        QStringLiteral("1. Lokomotiv-Pool && Engpass-Steuerung (Waggon-Zwischenlagerung)"), tabGoods);
-    auto *grpLocoLayout = new QGridLayout(grpLocoPool);
+    auto *globalSyncBar = new QHBoxLayout();
+    auto *btnSyncAll = new QPushButton(QStringLiteral("🔄 Alle angemeldeten Dienste abrufen (F9)"), tabLogins);
+    btnSyncAll->setStyleSheet("background-color: #0D9488; color: white; padding: 6px;");
+    auto *btnExpAllJson = new QPushButton(QStringLiteral("💾 Gesamt-JSON"), tabLogins);
+    auto *btnExpAllCsv  = new QPushButton(QStringLiteral("💾 Gesamt-CSV"), tabLogins);
+    globalSyncBar->addWidget(btnSyncAll, 1);
+    globalSyncBar->addWidget(btnExpAllJson);
+    globalSyncBar->addWidget(btnExpAllCsv);
+    tabLoginsLay->addLayout(globalSyncBar);
 
-    grpLocoLayout->addWidget(new QLabel(QStringLiteral("Verfügbare Lokomotiven im Pool:")), 0, 0, 1, 2);
-    m_spinLocoPool = new QSpinBox(grpLocoPool);
-    m_spinLocoPool->setRange(1, 20);
-    m_spinLocoPool->setValue(m_mapWidget->totalLocomotivesInPool());
-    m_spinLocoPool->setSuffix(QStringLiteral(" Lokomotiven"));
-    grpLocoLayout->addWidget(m_spinLocoPool, 0, 2, 1, 2);
+    // 6 eigene Login-Reiter – alle 6 Dienste gleichzeitig sichtbar ohne Scroll-Pfeile!
+    m_providerLoginTabs = new QTabWidget(tabLogins);
+    m_providerLoginTabs->setTabPosition(QTabWidget::North);
+    m_providerLoginTabs->setUsesScrollButtons(false);
+    m_providerLoginTabs->setStyleSheet(
+        "QTabBar::tab { font-size: 9px; padding: 5px 5px; margin-right: 1px; } "
+        "QTabBar::tab:selected { background-color: #334155; color: #FBD50E; border-bottom: 3px solid #EF7D00; }");
 
-    auto *btnCoupleLoco2 = new QPushButton(QStringLiteral("🚂 Freie Lok ankuppeln (Start)"), grpLocoPool);
-    btnCoupleLoco2->setStyleSheet("background-color: #059669; color: white;");
-    auto *btnUncoupleLoco2 = new QPushButton(QStringLiteral("🅿️ Lok abkuppeln (Waggons lagern)"), grpLocoPool);
-    btnUncoupleLoco2->setStyleSheet("background-color: #7E22CE; color: white;");
-    grpLocoLayout->addWidget(btnCoupleLoco2,   1, 0, 1, 2);
-    grpLocoLayout->addWidget(btnUncoupleLoco2, 1, 2, 1, 2);
-
-    m_lblLocoStatus = new QLabel(grpLocoPool);
-    m_lblLocoStatus->setWordWrap(true);
-    m_lblLocoStatus->setStyleSheet("color: #0F172A; font-weight: bold; font-size: 10px;");
-    grpLocoLayout->addWidget(m_lblLocoStatus, 2, 0, 1, 4);
-
-    tabGoodsLayout->addWidget(grpLocoPool);
-
-    // Gruppe 2: Neues Güter-Objekt anlegen & auf Waggons verteilen
-    auto *grpNewCargo = new QGroupBox(
-        QStringLiteral("2. Neues Güter-Objekt erzeugen && auf Waggons verteilen"), tabGoods);
-    auto *grpCargoLayout = new QGridLayout(grpNewCargo);
-
-    grpCargoLayout->addWidget(new QLabel(QStringLiteral("Stahlprodukt (Gut):")), 0, 0);
-    m_comboNewProduct = new QComboBox(grpNewCargo);
-    for (int p = 0; p < static_cast<int>(CargoProductType::EmptyWagon); ++p) {
-        m_comboNewProduct->addItem(RailMapWidget::productName(static_cast<CargoProductType>(p)));
-    }
-    grpCargoLayout->addWidget(m_comboNewProduct, 0, 1, 1, 3);
-
-    grpCargoLayout->addWidget(new QLabel(QStringLiteral("Quelle (Herstellung):")), 1, 0);
-    m_comboNewSource = new QComboBox(grpNewCargo);
-    grpCargoLayout->addWidget(m_comboNewSource, 1, 1);
-
-    grpCargoLayout->addWidget(new QLabel(QStringLiteral("Senke (Ziel/Kunde):")), 1, 2);
-    m_comboNewSink = new QComboBox(grpNewCargo);
-    grpCargoLayout->addWidget(m_comboNewSink, 1, 3);
-
-    for (const SourceSinkNode &n : m_mapWidget->sourceSinkNodes()) {
-        const QString itemTxt = QString("%1 — %2").arg(n.id, n.name);
-        m_comboNewSource->addItem(itemTxt, n.id);
-        m_comboNewSink->addItem(itemTxt, n.id);
+    for (Link2RailClient *client : m_clients) {
+        auto *w = new ProviderLoginWidget(client, m_providerLoginTabs);
+        m_loginWidgets.append(w);
+        connect(w, &ProviderLoginWidget::statusNotification, this, [this](const QString &msg) {
+            statusBar()->showMessage(msg, 8000);
+        });
+        connect(w, &ProviderLoginWidget::importSucceededFitRequested, this, [this]() {
+            m_sideTabs->setCurrentIndex(0);
+            m_mapWidget->fitAllLiveWagons(true);
+        });
+        m_providerLoginTabs->addTab(w, QStringLiteral("🔴 ") + client->info().tabLabel);
     }
 
-    grpCargoLayout->addWidget(new QLabel(QStringLiteral("Menge [Tonnen]:")), 2, 0);
-    m_spinNewTons = new QSpinBox(grpNewCargo);
-    m_spinNewTons->setRange(50, 1800);
-    m_spinNewTons->setSingleStep(50);
-    m_spinNewTons->setValue(360);
-    m_spinNewTons->setSuffix(QStringLiteral(" t"));
-    grpCargoLayout->addWidget(m_spinNewTons, 2, 1);
+    tabLoginsLay->addWidget(m_providerLoginTabs, 1);
+    m_sideTabs->addTab(tabLogins, QStringLiteral("🔐 Dienste && Logins (6)"));
 
-    grpCargoLayout->addWidget(new QLabel(QStringLiteral("Waggon-Typ:")), 2, 2);
-    m_comboNewWagonCat = new QComboBox(grpNewCargo);
-    m_comboNewWagonCat->addItem(QStringLiteral("Samms [6A] (bis 90 t)"));
-    m_comboNewWagonCat->addItem(QStringLiteral("Rns-z [4A] (bis 62 t)"));
-    m_comboNewWagonCat->addItem(QStringLiteral("Shimmns [4A Coil] (bis 56 t)"));
-    m_comboNewWagonCat->addItem(QStringLiteral("Torpedo/Faals [6A] (bis 96 t)"));
-    grpCargoLayout->addWidget(m_comboNewWagonCat, 2, 3);
+    // -------------------------------------------------------------------------
+    // TAB 3: STANDORTE, WERKE & GEOFENCES (LIVE-BELEGUNG ALLER 6 DIENSTE)
+    // -------------------------------------------------------------------------
+    auto *tabNodes = new QWidget();
+    auto *tabNodesLay = new QVBoxLayout(tabNodes);
+    tabNodesLay->setContentsMargins(8, 8, 8, 8);
+    tabNodesLay->setSpacing(8);
 
-    auto *btnCreateOrder = new QPushButton(
-        QStringLiteral("📦 Güter-Objekt erzeugen && an Quelle auf Waggons aufnehmen"), grpNewCargo);
-    btnCreateOrder->setStyleSheet("background-color: #EF7D00; color: white; padding: 5px;");
-    grpCargoLayout->addWidget(btnCreateOrder, 3, 0, 1, 4);
-
-    auto *btnLoadSourceNow = new QPushButton(
-        QStringLiteral("⬆️ An Quelle aufnehmen (Beladen)"), grpNewCargo);
-    btnLoadSourceNow->setStyleSheet("background-color: #15803D; color: white; padding: 5px;");
-    auto *btnUnloadSinkNow = new QPushButton(
-        QStringLiteral("⬇️ An Senke abladen (Entladen)"), grpNewCargo);
-    btnUnloadSinkNow->setStyleSheet("background-color: #0369A1; color: white; padding: 5px;");
-    grpCargoLayout->addWidget(btnLoadSourceNow, 4, 0, 1, 2);
-    grpCargoLayout->addWidget(btnUnloadSinkNow, 4, 2, 1, 2);
-
-    tabGoodsLayout->addWidget(grpNewCargo);
-
-    // Gruppe 3: Tabelle aller Quellen (Güter-Aufnahme) & Senken (Güter-Abladung)
-    auto *grpNodes = new QGroupBox(
-        QStringLiteral("3. Quellen (⬆️ Güter-Aufnahme) && Senken (⬇️ Güter-Abladung) — Klick = Zoom"), tabGoods);
-    auto *grpNodesLayout = new QVBoxLayout(grpNodes);
+    auto *grpNodes = new QGroupBox(QStringLiteral("SHS-Werke, Anlagen && Geofence-Bereiche (Klick = Karte zentrieren)"), tabNodes);
+    auto *nLay = new QVBoxLayout(grpNodes);
+    auto *lblNInfo = new QLabel(
+        QStringLiteral("Zeigt alle 10 realen Standorte von Saarstahl AG & Dillinger Hütte / ROGESA sowie die Gesamtzahl der per GPS über alle 6 Telematik-Dienste dort georteten Waggons:"),
+        grpNodes);
+    lblNInfo->setWordWrap(true);
+    nLay->addWidget(lblNInfo);
 
     m_tableNodes = new QTableWidget(0, 5, grpNodes);
     m_tableNodes->setHorizontalHeaderLabels({
-        QStringLiteral("Knoten-ID"),
-        QStringLiteral("Rolle (Aufn./Abl.)"),
-        QStringLiteral("Anlage / Standort"),
-        QStringLiteral("⬆️ Aufnahme (Quelle) / ⬇️ Abladung (Senke)"),
-        QStringLiteral("⬆️ Aufg. / ⬇️ Abgel.")
+        QStringLiteral("ID"),
+        QStringLiteral("Werk / Anlage"),
+        QStringLiteral("Rolle"),
+        QStringLiteral("📡 Live-Waggons"),
+        QStringLiteral("Typische Stahlgüter")
     });
-    m_tableNodes->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_tableNodes->setSelectionMode(QAbstractItemView::SingleSelection);
     m_tableNodes->setAlternatingRowColors(true);
+    m_tableNodes->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_tableNodes->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_tableNodes->verticalHeader()->setVisible(false);
     m_tableNodes->horizontalHeader()->setStretchLastSection(true);
-    m_tableNodes->setColumnWidth(0, 82);
-    m_tableNodes->setColumnWidth(1, 95);
-    m_tableNodes->setColumnWidth(2, 130);
-    m_tableNodes->setColumnWidth(3, 145);
-    grpNodesLayout->addWidget(m_tableNodes, 1);
+    m_tableNodes->setColumnWidth(0, 98);
+    m_tableNodes->setColumnWidth(1, 175);
+    m_tableNodes->setColumnWidth(2, 95);
+    m_tableNodes->setColumnWidth(3, 95);
+    nLay->addWidget(m_tableNodes, 1);
+    tabNodesLay->addWidget(grpNodes, 1);
 
-    tabGoodsLayout->addWidget(grpNodes, 1);
-
-    // Gruppe 4: Tabelle aller verwalteten Güter-Objekte (Cargo Orders)
-    auto *grpOrders = new QGroupBox(
-        QStringLiteral("4. Güter-Objekte (Aufnahme an Quelle -> Transport -> Abladung an Senke)"), tabGoods);
-    auto *grpOrdersLayout = new QVBoxLayout(grpOrders);
-
-    m_tableCargoOrders = new QTableWidget(0, 6, grpOrders);
-    m_tableCargoOrders->setHorizontalHeaderLabels({
-        QStringLiteral("Gut-ID"),
-        QStringLiteral("Stahlprodukt"),
-        QStringLiteral("Menge"),
-        QStringLiteral("⬆️ Quelle -> ⬇️ Senke"),
-        QStringLiteral("Waggons"),
-        QStringLiteral("Status (Aufnahme / Fahrt / Abladung)")
-    });
-    m_tableCargoOrders->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_tableCargoOrders->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_tableCargoOrders->setAlternatingRowColors(true);
-    m_tableCargoOrders->verticalHeader()->setVisible(false);
-    m_tableCargoOrders->horizontalHeader()->setStretchLastSection(true);
-    m_tableCargoOrders->setColumnWidth(0, 62);
-    m_tableCargoOrders->setColumnWidth(1, 115);
-    m_tableCargoOrders->setColumnWidth(2, 52);
-    m_tableCargoOrders->setColumnWidth(3, 118);
-    m_tableCargoOrders->setColumnWidth(4, 78);
-    grpOrdersLayout->addWidget(m_tableCargoOrders, 1);
-
-    tabGoodsLayout->addWidget(grpOrders, 1);
-    m_sideTabs->addTab(tabGoods, QStringLiteral("📦 Güter, Quellen && Senken"));
+    m_sideTabs->addTab(tabNodes, QStringLiteral("🏭 Werke && Geofences"));
 
     // -------------------------------------------------------------------------
-    // TAB 3: KARTE, GOOGLE MAPS & STANDORTE
+    // TAB 4: KARTE & DARSTELLUNG (INKL. SICHTBARKEIT JE TELEMATIK-DIENST)
     // -------------------------------------------------------------------------
     auto *tabMap = new QWidget();
-    auto *tabMapLayout = new QVBoxLayout(tabMap);
-    tabMapLayout->setContentsMargins(8, 8, 8, 8);
-    tabMapLayout->setSpacing(10);
+    auto *tabMapLay = new QVBoxLayout(tabMap);
+    tabMapLay->setContentsMargins(8, 8, 8, 8);
+    tabMapLay->setSpacing(8);
 
-    auto *grpSites = new QGroupBox(QStringLiteral("1. Standorte direkt anspringen (Zoom)"), tabMap);
-    auto *grpSitesLayout = new QVBoxLayout(grpSites);
+    auto *grpSites = new QGroupBox(QStringLiteral("1. Standort- && Kamera-Schnellwahl"), tabMap);
+    auto *gSites = new QGridLayout(grpSites);
+    auto *btnSiteVK  = new QPushButton(QStringLiteral("🏭 Werk Völklingen (Saarstahl)"), grpSites);
+    auto *btnSiteDL  = new QPushButton(QStringLiteral("🔥 Dillinger Hütte && ROGESA"), grpSites);
+    auto *btnSiteBB  = new QPushButton(QStringLiteral("⚙️ Werk Burbach (Drahtwerk)"), grpSites);
+    auto *btnSiteNK  = new QPushButton(QStringLiteral("🔩 Werk Neunkirchen"), grpSites);
+    auto *btnSiteSL  = new QPushButton(QStringLiteral("🗺️ Gesamtübersicht Saarland"), grpSites);
+    auto *btnSiteDE  = new QPushButton(QStringLiteral("🇩🇪 Deutschland-Übersicht"), grpSites);
+    auto *btnSiteFit = new QPushButton(QStringLiteral("🎯 Alle Live-Waggons einpassen"), grpSites);
+    btnSiteVK->setStyleSheet("background-color: #EF7D00; color: white;");
+    btnSiteFit->setStyleSheet("background-color: #0284C7; color: white;");
+    gSites->addWidget(btnSiteVK,  0, 0);
+    gSites->addWidget(btnSiteDL,  0, 1);
+    gSites->addWidget(btnSiteBB,  1, 0);
+    gSites->addWidget(btnSiteNK,  1, 1);
+    gSites->addWidget(btnSiteSL,  2, 0);
+    gSites->addWidget(btnSiteDE,  2, 1);
+    gSites->addWidget(btnSiteFit, 3, 0, 1, 2);
+    tabMapLay->addWidget(grpSites);
 
-    auto *btnSiteVK = new QPushButton(
-        QStringLiteral("🏭 Hauptwerk Völklingen (Saarstahl AG – LD-Stahlwerk, Walzwerk, Schmiede)"), grpSites);
-    btnSiteVK->setStyleSheet("background-color: #EF7D00; color: white; text-align: left; padding: 8px;");
-    auto *btnSiteDL = new QPushButton(
-        QStringLiteral("🔥 Dillinger Hütte & ROGESA (Quellen: Roheisen, Brammen & Grobbleche)"), grpSites);
-    btnSiteDL->setStyleSheet("background-color: #B91C1C; color: white; text-align: left; padding: 8px;");
-    auto *btnSiteBB = new QPushButton(
-        QStringLiteral("⚙️ Werk Burbach (Senke: Knüppel | Quelle: Aufgerollter Walzdraht / Coils)"), grpSites);
-    btnSiteBB->setStyleSheet("background-color: #0284C7; color: white; text-align: left; padding: 8px;");
-    auto *btnSiteNK = new QPushButton(
-        QStringLiteral("🔩 Werk Neunkirchen (Senke: Vorblöcke | Quelle: Stabstahl & Edelbaustahl)"), grpSites);
-    btnSiteNK->setStyleSheet("background-color: #059669; color: white; text-align: left; padding: 8px;");
-    auto *btnSiteAll = new QPushButton(
-        QStringLiteral("🗺️ Gesamtübersicht Saarland-Bahnkorridor (Alle 4 Standorte & Züge)"), grpSites);
-    btnSiteAll->setStyleSheet("background-color: #334155; color: #FBD50E; text-align: left; padding: 8px;");
+    auto *grpMapStyle = new QGroupBox(QStringLiteral("2. Google Maps Hintergrund && Werks-Layer"), tabMap);
+    auto *msLay = new QVBoxLayout(grpMapStyle);
 
-    grpSitesLayout->addWidget(btnSiteVK);
-    grpSitesLayout->addWidget(btnSiteDL);
-    grpSitesLayout->addWidget(btnSiteBB);
-    grpSitesLayout->addWidget(btnSiteNK);
-    grpSitesLayout->addWidget(btnSiteAll);
-    tabMapLayout->addWidget(grpSites);
-
-    auto *grpLayers = new QGroupBox(QStringLiteral("2. Google Maps && Vereinfachte Werksdarstellung"), tabMap);
-    auto *grpLayersLayout = new QVBoxLayout(grpLayers);
-
-    grpLayersLayout->addWidget(new QLabel(QStringLiteral("Kartenhintergrund-Modus:")));
-    m_comboMapMode = new QComboBox(grpLayers);
-    m_comboMapMode->addItem(QStringLiteral("Hybrid: Google Maps + Vereinfachtes Werk Völklingen (Empfohlen)"));
-    m_comboMapMode->addItem(QStringLiteral("Nur Vereinfachte Werks- & Gleisdarstellung (Schematisch / CAD)"));
+    msLay->addWidget(new QLabel(QStringLiteral("Kartenhintergrund-Modus:")));
+    m_comboMapMode = new QComboBox(grpMapStyle);
+    m_comboMapMode->addItem(QStringLiteral("Hybrid: Google Maps + Vereinfachtes Werk (Empfohlen)"));
+    m_comboMapMode->addItem(QStringLiteral("Nur Vereinfachte Werks- & Gleisdarstellung (Schematisch)"));
     m_comboMapMode->addItem(QStringLiteral("Google Maps Straßenkarte + Bahngleise"));
     m_comboMapMode->addItem(QStringLiteral("Google Maps Satellitenbild + Bahngleise"));
-    grpLayersLayout->addWidget(m_comboMapMode);
+    msLay->addWidget(m_comboMapMode);
 
-    m_chkSimplifiedPlant = new QCheckBox(QStringLiteral("Vereinfachtes Werksgelände & Werkhallen anzeigen"), grpLayers);
+    m_chkSimplifiedPlant = new QCheckBox(QStringLiteral("Vereinfachtes Werksgelände && Werkhallen anzeigen"), grpMapStyle);
     m_chkSimplifiedPlant->setChecked(true);
-    m_chkSourcesSinks = new QCheckBox(QStringLiteral("Quellen, Senken & Lagerbestände [t] auf Karte anzeigen"), grpLayers);
+    m_chkSourcesSinks    = new QCheckBox(QStringLiteral("SHS-Werke && Geofence-Karten anzeigen"), grpMapStyle);
     m_chkSourcesSinks->setChecked(true);
-    m_chkRoadsRivers = new QCheckBox(QStringLiteral("Vereinfachte Straßen (A620, B51, Werksstr.) & Saar anzeigen"), grpLayers);
+    m_chkRoadsRivers     = new QCheckBox(QStringLiteral("Vereinfachte Straßen (A620, B51) && Flüsse (Saar, Rossel)"), grpMapStyle);
     m_chkRoadsRivers->setChecked(true);
-    m_chkTrackLabels = new QCheckBox(QStringLiteral("Gleis-Bezeichnungen (VK-RING, KORRIDOR etc.) einblenden"), grpLayers);
+    m_chkTrackLabels     = new QCheckBox(QStringLiteral("Gleis-Bezeichnungen anzeigen"), grpMapStyle);
     m_chkTrackLabels->setChecked(true);
-    m_chkWagonLabels = new QCheckBox(QStringLiteral("Waggon-Positionsnummern & Güter (#1 Samms:Knüppel) einblenden"), grpLayers);
+    m_chkWagonLabels     = new QCheckBox(QStringLiteral("Waggon-EVN && Dienst-Labels auf der Karte anzeigen"), grpMapStyle);
     m_chkWagonLabels->setChecked(true);
-    m_chkExaggerateSize = new QCheckBox(QStringLiteral("2D-Züge & Waggons für Übersicht vergrößert darstellen"), grpLayers);
+    m_chkExaggerateSize  = new QCheckBox(QStringLiteral("2D-Waggons für Übersicht vergrößert darstellen"), grpMapStyle);
     m_chkExaggerateSize->setChecked(true);
+    m_chkSnapToTracks    = new QCheckBox(QStringLiteral("🧲 GPS-Positionen im Werksbereich auf Gleisachsen snappen (<= 120 m)"), grpMapStyle);
+    m_chkSnapToTracks->setChecked(true);
 
-    grpLayersLayout->addWidget(m_chkSimplifiedPlant);
-    grpLayersLayout->addWidget(m_chkSourcesSinks);
-    grpLayersLayout->addWidget(m_chkRoadsRivers);
-    grpLayersLayout->addWidget(m_chkTrackLabels);
-    grpLayersLayout->addWidget(m_chkWagonLabels);
-    grpLayersLayout->addWidget(m_chkExaggerateSize);
-    tabMapLayout->addWidget(grpLayers);
+    msLay->addWidget(m_chkSimplifiedPlant);
+    msLay->addWidget(m_chkSourcesSinks);
+    msLay->addWidget(m_chkRoadsRivers);
+    msLay->addWidget(m_chkTrackLabels);
+    msLay->addWidget(m_chkWagonLabels);
+    msLay->addWidget(m_chkExaggerateSize);
+    msLay->addWidget(m_chkSnapToTracks);
+    tabMapLay->addWidget(grpMapStyle);
 
-    auto *grpSimSpeed = new QGroupBox(QStringLiteral("3. Simulationsgeschwindigkeit"), tabMap);
-    auto *grpSimLayout = new QHBoxLayout(grpSimSpeed);
-    grpSimLayout->addWidget(new QLabel(QStringLiteral("Tempo:")));
-    m_sliderSimSpeed = new QSlider(Qt::Horizontal, grpSimSpeed);
-    m_sliderSimSpeed->setRange(2, 100);
-    m_sliderSimSpeed->setValue(25);
-    grpSimLayout->addWidget(m_sliderSimSpeed, 1);
-    m_lblSimSpeedVal = new QLabel(QStringLiteral("2.5x"), grpSimSpeed);
-    grpSimLayout->addWidget(m_lblSimSpeedVal);
-    tabMapLayout->addWidget(grpSimSpeed);
+    // Sichtbarkeit pro Telematik-Dienst auf der gemeinsamen Karte
+    auto *grpProvLayer = new QGroupBox(QStringLiteral("3. Sichtbare Telematik-Dienste auf der gemeinsamen Karte"), tabMap);
+    auto *plLay = new QGridLayout(grpProvLayer);
+    const auto allProv = Link2RailClient::allProviders();
+    for (int i = 0; i < allProv.size(); ++i) {
+        const auto &pi = allProv[i];
+        auto *chk = new QCheckBox(QStringLiteral("● %1").arg(pi.shortName), grpProvLayer);
+        chk->setChecked(true);
+        chk->setStyleSheet(QString("QCheckBox { color: %1; font-weight: bold; }").arg(pi.badgeColor.darker(115).name()));
+        connect(chk, &QCheckBox::toggled, this, [this, key = pi.key](bool checked) {
+            m_mapWidget->setProviderVisible(key, checked);
+        });
+        plLay->addWidget(chk, i / 2, i % 2);
+    }
+    tabMapLay->addWidget(grpProvLayer);
 
-    tabMapLayout->addStretch(1);
-    m_sideTabs->addTab(tabMap, QStringLiteral("🗺️ Karte && Standorte"));
-
-    // -------------------------------------------------------------------------
-    // TAB 4: BAHN-API (DB API) & ZUFÄLLIGE GLEISPOSITIONIERUNG
-    // -------------------------------------------------------------------------
-    auto *tabApi = new QWidget();
-    auto *tabApiLayout = new QVBoxLayout(tabApi);
-    tabApiLayout->setContentsMargins(8, 8, 8, 8);
-    tabApiLayout->setSpacing(10);
-
-    auto *grpRandomTest = new QGroupBox(QStringLiteral("1. Test-Modus: Zufällige Positionierung auf den Gleisen"), tabApi);
-    auto *grpRandLayout = new QVBoxLayout(grpRandomTest);
-    auto *lblRandInfo = new QLabel(
-        QStringLiteral("Platziert Züge und gelagerte Waggongruppen (Samms, Rns-z, 4-Achser, 6-Achser) zum Testen "
-                       "sofort an zufälligen, gültigen Positionen auf den Bahngleisen:"), grpRandomTest);
-    lblRandInfo->setWordWrap(true);
-    grpRandLayout->addWidget(lblRandInfo);
-
-    auto *btnRandAll = new QPushButton(
-        QStringLiteral("🎲 Zufällige Positionen auf ALLEN Gleisen (Saarland)"), grpRandomTest);
-    btnRandAll->setStyleSheet("background-color: #EF7D00; color: white; padding: 8px;");
-    auto *btnRandVK = new QPushButton(
-        QStringLiteral("🎲 Zufällige Positionen im Werk VÖLKLINGEN"), grpRandomTest);
-    btnRandVK->setStyleSheet("background-color: #0284C7; color: white; padding: 8px;");
-    grpRandLayout->addWidget(btnRandAll);
-    grpRandLayout->addWidget(btnRandVK);
-    tabApiLayout->addWidget(grpRandomTest);
-
-    auto *grpDbApi = new QGroupBox(QStringLiteral("2. Bahn-API Schnittstelle (DB Cargo / SaarRail Telematik)"), tabApi);
-    auto *grpApiLayout = new QGridLayout(grpDbApi);
-
-    grpApiLayout->addWidget(new QLabel(QStringLiteral("API-Endpunkt:")), 0, 0);
-    m_editApiUrl = new QLineEdit(
-        QStringLiteral("https://apis.deutschebahn.com/db-api-marketplace/apis/cargo-wagon-tracking/v2/positions"),
-        grpDbApi);
-    grpApiLayout->addWidget(m_editApiUrl, 0, 1);
-
-    grpApiLayout->addWidget(new QLabel(QStringLiteral("DB-Client-Id:")), 1, 0);
-    m_editClientId = new QLineEdit(QStringLiteral("shs-logistics-taps-client"), grpDbApi);
-    grpApiLayout->addWidget(m_editClientId, 1, 1);
-
-    grpApiLayout->addWidget(new QLabel(QStringLiteral("DB-Api-Key:")), 2, 0);
-    m_editApiKey = new QLineEdit(grpDbApi);
-    m_editApiKey->setPlaceholderText(QStringLiteral("Optionaler API-Key (leer = integrierter DB-Telematik-Simulator)"));
-    m_editApiKey->setEchoMode(QLineEdit::PasswordEchoOnEdit);
-    grpApiLayout->addWidget(m_editApiKey, 2, 1);
-
-    auto *btnQueryApi = new QPushButton(
-        QStringLiteral("📡 Waggon-Positionen über Bahn-API abrufen"), grpDbApi);
-    btnQueryApi->setStyleSheet("background-color: #0D9488; color: white; padding: 8px;");
-    grpApiLayout->addWidget(btnQueryApi, 3, 0, 1, 2);
-
-    m_chkAutoPollApi = new QCheckBox(
-        QStringLiteral("🔄 Live-API-Synchronisation aktivieren (alle 5 Sek. Positionen abrufen)"), grpDbApi);
-    grpApiLayout->addWidget(m_chkAutoPollApi, 4, 0, 1, 2);
-
-    grpApiLayout->addWidget(new QLabel(QStringLiteral("Bahn-API Telematik-Protokoll (JSON inkl. Güter & Lagerstatus):")), 5, 0, 1, 2);
-    m_txtApiLog = new QPlainTextEdit(grpDbApi);
-    m_txtApiLog->setReadOnly(true);
-    m_txtApiLog->setStyleSheet(
-        "background-color: #0F172A; color: #38BDF8; font-family: Consolas, monospace; font-size: 10px;");
-    m_txtApiLog->setPlainText(
-        QStringLiteral("// Bereit für DB-API Waggon-Ortung oder Zufalls-Testpositionierung.\n"
-                       "// Klicken Sie auf '📡 Waggon-Positionen jetzt über Bahn-API abrufen' oder '🎲 Zufällige Positionen'."));
-    grpApiLayout->addWidget(m_txtApiLog, 6, 0, 1, 2);
-
-    tabApiLayout->addWidget(grpDbApi, 1);
-    m_sideTabs->addTab(tabApi, QStringLiteral("📡 Bahn-API && Test"));
+    tabMapLay->addStretch(1);
+    m_sideTabs->addTab(tabMap, QStringLiteral("🗺️ Karte && Layer"));
 
     mainSplitter->addWidget(m_sideTabs);
     mainSplitter->addWidget(m_mapWidget);
     mainSplitter->setStretchFactor(0, 0);
     mainSplitter->setStretchFactor(1, 1);
-    mainSplitter->setSizes({640, 1280});
+    mainSplitter->setSizes({650, 1270});
 
     rootLayout->addWidget(mainSplitter, 1);
-
-    // Initiale Standard-Auswahl für neuen Güterauftrag setzen
-    onNewOrderProductChanged(0);
 
     // =========================================================================
     // 4. SIGNAL-SLOT VERBINDUNGEN
@@ -752,58 +628,54 @@ void MainWindowSHSLogistics::buildMainLayout()
     connectSiteBtn(btnZoomDL, QStringLiteral("Dillingen"));
     connectSiteBtn(btnZoomBB, QStringLiteral("Burbach"));
     connectSiteBtn(btnZoomNK, QStringLiteral("Neunkirchen"));
-    connectSiteBtn(btnZoomAll, QStringLiteral("Gesamt"));
+    connectSiteBtn(btnZoomSL, QStringLiteral("Gesamt"));
+    connectSiteBtn(btnZoomDE, QStringLiteral("Deutschland"));
+    connect(btnZoomFit, &QPushButton::clicked, this, [this]() { m_mapWidget->fitAllLiveWagons(true); });
 
     connectSiteBtn(btnSiteVK, QStringLiteral("Voelklingen"));
     connectSiteBtn(btnSiteDL, QStringLiteral("Dillingen"));
     connectSiteBtn(btnSiteBB, QStringLiteral("Burbach"));
     connectSiteBtn(btnSiteNK, QStringLiteral("Neunkirchen"));
-    connectSiteBtn(btnSiteAll, QStringLiteral("Gesamt"));
+    connectSiteBtn(btnSiteSL, QStringLiteral("Gesamt"));
+    connectSiteBtn(btnSiteDE, QStringLiteral("Deutschland"));
+    connect(btnSiteFit, &QPushButton::clicked, this, [this]() { m_mapWidget->fitAllLiveWagons(true); });
 
-    connect(m_btnPlayPause,     &QPushButton::clicked, this, &MainWindowSHSLogistics::onToggleSimClicked);
-    connect(btnQuickAddSamms,   &QPushButton::clicked, this, &MainWindowSHSLogistics::onAddSammsClicked);
-    connect(btnQuickAddRnsz,    &QPushButton::clicked, this, &MainWindowSHSLogistics::onAddRnszClicked);
-    connect(btnQuickAddTorpedo, &QPushButton::clicked, this, &MainWindowSHSLogistics::onAdd6AxleClicked);
-    connect(btnQuickRemove,     &QPushButton::clicked, this, &MainWindowSHSLogistics::onRemoveWagonClicked);
-    connect(btnQuickRandom,     &QPushButton::clicked, this, &MainWindowSHSLogistics::onRandomizeAllClicked);
-    connect(btnQuickDbApi,      &QPushButton::clicked, this, &MainWindowSHSLogistics::onQueryDbApiClicked);
+    connect(m_btnToolbarLogins,  &QPushButton::clicked, this, [this]() { m_sideTabs->setCurrentIndex(1); });
+    connect(m_btnToolbarSyncAll, &QPushButton::clicked, this, &MainWindowSHSLogistics::onFetchAllAuthenticatedClicked);
+    connect(btnQuickImp,         &QPushButton::clicked, this, &MainWindowSHSLogistics::onQuickImportActiveProviderClicked);
+    connect(btnBannerLogin,      &QPushButton::clicked, this, [this]() { m_sideTabs->setCurrentIndex(1); });
 
     // Tab 1
-    connect(m_comboTrain,       QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindowSHSLogistics::onTrainComboChanged);
-    connect(m_comboTrackAssign, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindowSHSLogistics::onTrackAssignChanged);
-    connect(btnReverse,         &QPushButton::clicked, this, &MainWindowSHSLogistics::onReverseTrainClicked);
-    connect(btnCoupleLoco1,     &QPushButton::clicked, this, &MainWindowSHSLogistics::onCoupleLocoClicked);
-    connect(btnUncoupleLoco1,   &QPushButton::clicked, this, &MainWindowSHSLogistics::onUncoupleLocoClicked);
-    connect(m_spinWagonCount,   QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindowSHSLogistics::onWagonCountSpinChanged);
-    connect(btnAddSamms,        &QPushButton::clicked, this, &MainWindowSHSLogistics::onAddSammsClicked);
-    connect(btnAddRnsz,         &QPushButton::clicked, this, &MainWindowSHSLogistics::onAddRnszClicked);
-    connect(btnAdd4A,           &QPushButton::clicked, this, &MainWindowSHSLogistics::onAdd4AxleClicked);
-    connect(btnAdd6A,           &QPushButton::clicked, this, &MainWindowSHSLogistics::onAdd6AxleClicked);
-    connect(btnRemoveLast,      &QPushButton::clicked, this, &MainWindowSHSLogistics::onRemoveWagonClicked);
-    connect(m_comboColorMode,   QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindowSHSLogistics::onColorModeChanged);
-    connect(m_tableWagons,      &QTableWidget::cellClicked, this, &MainWindowSHSLogistics::onWagonTableClicked);
-    connect(m_tableWagons,      &QTableWidget::cellDoubleClicked, this, &MainWindowSHSLogistics::onWagonTableDoubleClicked);
-    connect(btnApplyWagonType,  &QPushButton::clicked, this, &MainWindowSHSLogistics::onChangeSelectedWagonCategory);
-    connect(btnZoomSelectedWagon, &QPushButton::clicked, this, [this]() {
+    connect(m_comboProviderFilter, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindowSHSLogistics::onLiveFilterChanged);
+    connect(m_editSearchFilter,    &QLineEdit::textChanged, this, &MainWindowSHSLogistics::onLiveFilterChanged);
+    connect(m_comboCategoryFilter, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindowSHSLogistics::onLiveFilterChanged);
+    connect(m_comboColorMode,      QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindowSHSLogistics::onColorModeChanged);
+    connect(m_tableLiveWagons,     &QTableWidget::cellClicked, this, &MainWindowSHSLogistics::onLiveWagonTableClicked);
+    connect(m_tableLiveWagons,     &QTableWidget::cellDoubleClicked, this, &MainWindowSHSLogistics::onLiveWagonTableDoubleClicked);
+    connect(btnZoomSelectedWagon,  &QPushButton::clicked, this, [this]() {
         m_mapWidget->zoomToWagon(m_mapWidget->selectedTrainIndex(), m_mapWidget->selectedWagonIndex());
     });
+    connect(btnFitAllTab1, &QPushButton::clicked, this, [this]() { m_mapWidget->fitAllLiveWagons(true); });
+    connect(btnCopyJson, &QPushButton::clicked, this, [this]() {
+        const int tIdx = m_mapWidget->selectedTrainIndex();
+        const int wIdx = m_mapWidget->selectedWagonIndex();
+        const auto &trains = m_mapWidget->trains();
+        if (tIdx >= 0 && tIdx < trains.size() && wIdx >= 0 && wIdx < trains[tIdx].wagons.size()) {
+            const QJsonObject obj = QJsonObject::fromVariantMap(trains[tIdx].wagons[wIdx].rawAttributes);
+            QApplication::clipboard()->setText(QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Indented)));
+            statusBar()->showMessage(QStringLiteral("Waggon-JSON in die Zwischenablage kopiert."), 4000);
+        }
+    });
 
-    // Tab 2 (Güter, Quellen/Senken & Lok-Pool)
-    connect(m_spinLocoPool,    QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindowSHSLogistics::onLocoPoolSpinChanged);
-    connect(btnCoupleLoco2,    &QPushButton::clicked, this, &MainWindowSHSLogistics::onCoupleLocoClicked);
-    connect(btnUncoupleLoco2,  &QPushButton::clicked, this, &MainWindowSHSLogistics::onUncoupleLocoClicked);
-    connect(m_comboNewProduct, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindowSHSLogistics::onNewOrderProductChanged);
-    connect(btnCreateOrder,    &QPushButton::clicked, this, &MainWindowSHSLogistics::onCreateCargoOrderClicked);
-    connect(btnLoadSourceNow,  &QPushButton::clicked, this, [this]() {
-        m_mapWidget->loadTrainAtSourceNow(m_mapWidget->selectedTrainIndex());
-    });
-    connect(btnUnloadSinkNow,  &QPushButton::clicked, this, [this]() {
-        m_mapWidget->unloadTrainAtSinkNow(m_mapWidget->selectedTrainIndex());
-    });
-    connect(m_tableNodes,      &QTableWidget::cellClicked, this, &MainWindowSHSLogistics::onNodeTableClicked);
-    connect(m_tableCargoOrders,&QTableWidget::cellClicked, this, &MainWindowSHSLogistics::onCargoOrderTableClicked);
+    // Tab 2 Global Buttons
+    connect(btnSyncAll,    &QPushButton::clicked, this, &MainWindowSHSLogistics::onFetchAllAuthenticatedClicked);
+    connect(btnExpAllJson, &QPushButton::clicked, this, &MainWindowSHSLogistics::onExportAllJsonClicked);
+    connect(btnExpAllCsv,  &QPushButton::clicked, this, &MainWindowSHSLogistics::onExportAllCsvClicked);
 
     // Tab 3
+    connect(m_tableNodes, &QTableWidget::cellClicked, this, &MainWindowSHSLogistics::onNodeTableClicked);
+
+    // Tab 4
     connect(m_comboMapMode,       QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindowSHSLogistics::onMapModeChanged);
     connect(m_chkSimplifiedPlant, &QCheckBox::toggled, m_mapWidget, &RailMapWidget::setShowSimplifiedPlant);
     connect(m_chkSourcesSinks,    &QCheckBox::toggled, m_mapWidget, &RailMapWidget::setShowSourcesAndSinks);
@@ -811,24 +683,14 @@ void MainWindowSHSLogistics::buildMainLayout()
     connect(m_chkTrackLabels,     &QCheckBox::toggled, m_mapWidget, &RailMapWidget::setShowTrackLabels);
     connect(m_chkWagonLabels,     &QCheckBox::toggled, m_mapWidget, &RailMapWidget::setShowWagonLabels);
     connect(m_chkExaggerateSize,  &QCheckBox::toggled, m_mapWidget, &RailMapWidget::setExaggerateWagonSize);
-    connect(m_sliderSimSpeed,     &QSlider::valueChanged, this, &MainWindowSHSLogistics::onSpeedSliderChanged);
-
-    // Tab 4
-    connect(btnRandAll,       &QPushButton::clicked, this, &MainWindowSHSLogistics::onRandomizeAllClicked);
-    connect(btnRandVK,        &QPushButton::clicked, this, &MainWindowSHSLogistics::onRandomizeVoelklingenClicked);
-    connect(btnQueryApi,      &QPushButton::clicked, this, &MainWindowSHSLogistics::onQueryDbApiClicked);
-    connect(m_chkAutoPollApi, &QCheckBox::toggled,   this, &MainWindowSHSLogistics::onAutoPollToggled);
+    connect(m_chkSnapToTracks,    &QCheckBox::toggled, m_mapWidget, &RailMapWidget::setSnapLiveGpsToTracks);
 
     // MapWidget Signale
     connect(m_mapWidget, &RailMapWidget::selectionChanged,     this, &MainWindowSHSLogistics::onMapSelectionChanged);
     connect(m_mapWidget, &RailMapWidget::trainsUpdated,        this, &MainWindowSHSLogistics::onTrainsUpdated);
-    connect(m_mapWidget, &RailMapWidget::cargoAndNodesUpdated, this, &MainWindowSHSLogistics::onCargoAndNodesUpdated);
-    connect(m_mapWidget, &RailMapWidget::simulationStepped,    this, &MainWindowSHSLogistics::onSimStepped);
+    connect(m_mapWidget, &RailMapWidget::cargoAndNodesUpdated, this, &MainWindowSHSLogistics::onNodesUpdated);
     connect(m_mapWidget, &RailMapWidget::statusMessage,        this, [this](const QString &msg) {
         statusBar()->showMessage(msg, 8000);
-    });
-    connect(m_mapWidget, &RailMapWidget::apiLogMessage,        this, [this](const QString &jsonText) {
-        m_txtApiLog->setPlainText(jsonText);
     });
 }
 
@@ -838,6 +700,13 @@ void MainWindowSHSLogistics::setupMenuBar()
     mb->clear();
 
     QMenu *menuFile = mb->addMenu(QStringLiteral("&Datei"));
+    QAction *actImport = menuFile->addAction(QStringLiteral("📂 Telematik-Datei importieren (JSON / XML / CSV) ..."));
+    connect(actImport, &QAction::triggered, this, &MainWindowSHSLogistics::onQuickImportActiveProviderClicked);
+    QAction *actExpJson = menuFile->addAction(QStringLiteral("💾 Alle Live-Daten als JSON exportieren ..."));
+    connect(actExpJson, &QAction::triggered, this, &MainWindowSHSLogistics::onExportAllJsonClicked);
+    QAction *actExpCsv = menuFile->addAction(QStringLiteral("💾 Alle Live-Daten als CSV exportieren ..."));
+    connect(actExpCsv, &QAction::triggered, this, &MainWindowSHSLogistics::onExportAllCsvClicked);
+    menuFile->addSeparator();
     QAction *actPrint = menuFile->addAction(QStringLiteral("🖨️ Kartenansicht drucken / PDF ..."));
     actPrint->setShortcut(QKeySequence::Print);
     connect(actPrint, &QAction::triggered, this, &MainWindowSHSLogistics::onPrintMap);
@@ -855,47 +724,33 @@ void MainWindowSHSLogistics::setupMenuBar()
         });
     };
     addSiteAct(QStringLiteral("🏭 Werk Völklingen (Saarstahl Hauptwerk)"), QStringLiteral("Voelklingen"), Qt::Key_F1);
-    addSiteAct(QStringLiteral("🔥 Dillinger Hütte & ROGESA (Roheisen/Blech)"), QStringLiteral("Dillingen"), Qt::Key_F2);
+    addSiteAct(QStringLiteral("🔥 Dillinger Hütte & ROGESA"), QStringLiteral("Dillingen"), Qt::Key_F2);
     addSiteAct(QStringLiteral("⚙️ Werk Burbach (Drahtwerk)"), QStringLiteral("Burbach"), Qt::Key_F3);
     addSiteAct(QStringLiteral("🔩 Werk Neunkirchen (Walzwerk)"), QStringLiteral("Neunkirchen"), Qt::Key_F4);
     addSiteAct(QStringLiteral("🗺️ Gesamtübersicht Saarland-Korridor"), QStringLiteral("Gesamt"), Qt::Key_F5);
+    addSiteAct(QStringLiteral("🇩🇪 Deutschland-Übersicht"), QStringLiteral("Deutschland"), Qt::Key_F6);
+    menuSites->addSeparator();
+    QAction *actFitAll = menuSites->addAction(QStringLiteral("🎯 Alle Live-Waggons einpassen"));
+    actFitAll->setShortcut(Qt::Key_F7);
+    connect(actFitAll, &QAction::triggered, this, [this]() { m_mapWidget->fitAllLiveWagons(true); });
 
-    QMenu *menuSim = mb->addMenu(QStringLiteral("&Zug-Simulation && Güter"));
-    QAction *actPlayPause = menuSim->addAction(QStringLiteral("⏯ Simulation Start / Pause"));
-    actPlayPause->setShortcut(Qt::Key_Space);
-    connect(actPlayPause, &QAction::triggered, this, &MainWindowSHSLogistics::onToggleSimClicked);
-    menuSim->addSeparator();
-    QAction *actAddSamms = menuSim->addAction(QStringLiteral("➕ Zug verlängern: Samms (6-Achser) anhängen"));
-    connect(actAddSamms, &QAction::triggered, this, &MainWindowSHSLogistics::onAddSammsClicked);
-    QAction *actAddRnsz = menuSim->addAction(QStringLiteral("➕ Zug verlängern: Rns-z (4-Achser) anhängen"));
-    connect(actAddRnsz, &QAction::triggered, this, &MainWindowSHSLogistics::onAddRnszClicked);
-    QAction *actRemWagon = menuSim->addAction(QStringLiteral("➖ Zug verkürzen: Letzten Waggon abhängen"));
-    connect(actRemWagon, &QAction::triggered, this, &MainWindowSHSLogistics::onRemoveWagonClicked);
-    menuSim->addSeparator();
-    QAction *actCouple = menuSim->addAction(QStringLiteral("🚂 Freie Lokomotive an ausgewählte Waggongruppe ankuppeln"));
-    connect(actCouple, &QAction::triggered, this, &MainWindowSHSLogistics::onCoupleLocoClicked);
-    QAction *actUncouple = menuSim->addAction(QStringLiteral("🅿️ Lokomotive abkuppeln (Waggons mit Gütern auf Gleis lagern)"));
-    connect(actUncouple, &QAction::triggered, this, &MainWindowSHSLogistics::onUncoupleLocoClicked);
-    menuSim->addSeparator();
-    QAction *actLoadSource = menuSim->addAction(QStringLiteral("⬆️ Güter jetzt an Quelle aufnehmen (Zug beladen)"));
-    connect(actLoadSource, &QAction::triggered, this, [this]() {
-        m_mapWidget->loadTrainAtSourceNow(m_mapWidget->selectedTrainIndex());
-    });
-    QAction *actUnloadSink = menuSim->addAction(QStringLiteral("⬇️ Güter jetzt an Senke abladen (Zug entladen)"));
-    connect(actUnloadSink, &QAction::triggered, this, [this]() {
-        m_mapWidget->unloadTrainAtSinkNow(m_mapWidget->selectedTrainIndex());
-    });
-
-    QMenu *menuApi = mb->addMenu(QStringLiteral("&Bahn-API && Ortung"));
-    QAction *actRandAll = menuApi->addAction(QStringLiteral("🎲 Zufällige Positionen auf allen Gleisen (Test)"));
-    actRandAll->setShortcut(Qt::Key_F8);
-    connect(actRandAll, &QAction::triggered, this, &MainWindowSHSLogistics::onRandomizeAllClicked);
-    QAction *actRandVK = menuApi->addAction(QStringLiteral("🎲 Zufällige Positionen im Werk Völklingen"));
-    connect(actRandVK, &QAction::triggered, this, &MainWindowSHSLogistics::onRandomizeVoelklingenClicked);
-    menuApi->addSeparator();
-    QAction *actDbApi = menuApi->addAction(QStringLiteral("📡 Positionen über Bahn-API (DB API) abrufen"));
-    actDbApi->setShortcut(Qt::Key_F9);
-    connect(actDbApi, &QAction::triggered, this, &MainWindowSHSLogistics::onQueryDbApiClicked);
+    QMenu *menuDienste = mb->addMenu(QStringLiteral("&Telematik && Simulation (6)"));
+    const auto providers = Link2RailClient::allProviders();
+    for (int i = 0; i < providers.size(); ++i) {
+        QAction *a = menuDienste->addAction(QStringLiteral("🔐 Login: %1").arg(providers[i].displayName));
+        if (i == 0) a->setShortcut(QKeySequence(QStringLiteral("Ctrl+L")));
+        connect(a, &QAction::triggered, this, [this, i]() { onOpenProviderTab(i); });
+    }
+    menuDienste->addSeparator();
+    QAction *actFetchAll = menuDienste->addAction(QStringLiteral("🔄 Alle angemeldeten Dienste jetzt abrufen"));
+    actFetchAll->setShortcut(Qt::Key_F9);
+    connect(actFetchAll, &QAction::triggered, this, &MainWindowSHSLogistics::onFetchAllAuthenticatedClicked);
+    QAction *actLogoutAll = menuDienste->addAction(QStringLiteral("🚪 Von allen 6 Diensten abmelden"));
+    connect(actLogoutAll, &QAction::triggered, this, &MainWindowSHSLogistics::onLogoutAllClicked);
+    menuDienste->addSeparator();
+    QAction *actDevTeam = menuDienste->addAction(
+        QStringLiteral("👩‍💻 Entwicklung: Frank U. Rückert && Sevda Dawd (sevdasdawd@gmail.com)"));
+    connect(actDevTeam, &QAction::triggered, this, &MainWindowSHSLogistics::onShowAboutDialog);
 
     QMenu *menuHelp = mb->addMenu(QStringLiteral("&Hilfe"));
     QAction *actMainPdf = menuHelp->addAction(
@@ -917,408 +772,413 @@ void MainWindowSHSLogistics::setupMenuBar()
         QStringLiteral("🖼️ Start-Splashscreen (SHS Corporate Design) anzeigen"));
     connect(actSplash, &QAction::triggered, this, &MainWindowSHSLogistics::onShowSplashPreviewDialog);
 
-    QAction *actAbout = menuHelp->addAction(QStringLiteral("ℹ️ Über SHS Logistics GmbH – Leitsystem"));
+    QAction *actAbout = menuHelp->addAction(QStringLiteral("ℹ️ Über SHS Logistics – Team: Frank U. Rückert && Sevda Dawd"));
     connect(actAbout, &QAction::triggered, this, &MainWindowSHSLogistics::onShowAboutDialog);
 }
 
-void MainWindowSHSLogistics::refreshTrainSelectorAndControls()
+void MainWindowSHSLogistics::onOpenProviderTab(int providerIndex)
+{
+    m_sideTabs->setCurrentIndex(1);
+    if (m_providerLoginTabs && providerIndex >= 0 && providerIndex < m_providerLoginTabs->count()) {
+        m_providerLoginTabs->setCurrentIndex(providerIndex);
+    }
+}
+
+void MainWindowSHSLogistics::onFetchAllAuthenticatedClicked()
+{
+    int triggered = 0;
+    for (Link2RailClient *c : m_clients) {
+        if (c->isAuthenticated()) {
+            c->fetchAllLiveData();
+            triggered++;
+        }
+    }
+    if (triggered == 0) {
+        m_sideTabs->setCurrentIndex(1);
+        statusBar()->showMessage(
+            QStringLiteral("Aktuell ist kein Telematik-Dienst angemeldet. Bitte in einem der 6 Login-Reiter anmelden."), 6000);
+    } else {
+        statusBar()->showMessage(
+            QStringLiteral("Live-GPS-Abruf für %1 angemeldete(n) Telematik-Dienst(e) gestartet ...").arg(triggered), 5000);
+    }
+}
+
+void MainWindowSHSLogistics::onLogoutAllClicked()
+{
+    for (ProviderLoginWidget *w : m_loginWidgets) {
+        if (w->client()->isAuthenticated() || !w->client()->latestRecords().isEmpty()) {
+            w->client()->logout();
+            w->refreshStatusCard();
+        }
+    }
+    rebuildUnifiedLiveData();
+}
+
+void MainWindowSHSLogistics::onQuickImportActiveProviderClicked()
+{
+    const int idx = (m_providerLoginTabs && m_providerLoginTabs->currentIndex() >= 0)
+                        ? m_providerLoginTabs->currentIndex()
+                        : 0;
+    if (idx < 0 || idx >= m_clients.size()) return;
+    Link2RailClient *client = m_clients[idx];
+
+    const QString path = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("Telematik-Datei laden für %1 (JSON / GeoJSON / XML / CSV)").arg(client->info().shortName),
+        QString(),
+        QStringLiteral("Telematik-Daten (*.json *.geojson *.xml *.csv *.txt);;Alle Dateien (*.*)"));
+    if (path.isEmpty()) return;
+
+    QString err;
+    if (!client->importFromFile(path, &err)) {
+        QMessageBox::warning(this, QStringLiteral("Import fehlgeschlagen"), err);
+    } else {
+        m_sideTabs->setCurrentIndex(0);
+        m_mapWidget->fitAllLiveWagons(true);
+    }
+}
+
+void MainWindowSHSLogistics::onExportAllJsonClicked()
+{
+    const auto all = collectUnifiedRecords();
+    if (all.isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("Export"), QStringLiteral("Aktuell sind keine Live-Waggondaten geladen."));
+        return;
+    }
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Alle Live-Waggondaten als JSON speichern"),
+        QStringLiteral("shs_multi_telematik_live.json"), QStringLiteral("JSON (*.json)"));
+    if (path.isEmpty()) return;
+    QString err;
+    if (Link2RailClient::exportRecordsToJsonFile(all, path, &err)) {
+        statusBar()->showMessage(QStringLiteral("Gesamt-JSON erfolgreich gespeichert (%1 Waggons): %2").arg(all.size()).arg(path), 6000);
+    } else {
+        QMessageBox::warning(this, QStringLiteral("Export-Fehler"), err);
+    }
+}
+
+void MainWindowSHSLogistics::onExportAllCsvClicked()
+{
+    const auto all = collectUnifiedRecords();
+    if (all.isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("Export"), QStringLiteral("Aktuell sind keine Live-Waggondaten geladen."));
+        return;
+    }
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Alle Live-Waggondaten als CSV speichern"),
+        QStringLiteral("shs_multi_telematik_live.csv"), QStringLiteral("CSV (*.csv)"));
+    if (path.isEmpty()) return;
+    QString err;
+    if (Link2RailClient::exportRecordsToCsvFile(all, path, &err)) {
+        statusBar()->showMessage(QStringLiteral("Gesamt-CSV erfolgreich gespeichert (%1 Waggons): %2").arg(all.size()).arg(path), 6000);
+    } else {
+        QMessageBox::warning(this, QStringLiteral("Export-Fehler"), err);
+    }
+}
+
+void MainWindowSHSLogistics::onAnyProviderAuthChanged()
+{
+    updateHeaderAndConnectionUi();
+}
+
+void MainWindowSHSLogistics::onAnyProviderDataUpdated()
+{
+    rebuildUnifiedLiveData();
+}
+
+QVector<Link2RailWagonRecord> MainWindowSHSLogistics::collectUnifiedRecords() const
+{
+    QVector<Link2RailWagonRecord> merged;
+    QHash<QString, int> evnToIndex;
+
+    for (const Link2RailClient *client : m_clients) {
+        for (const Link2RailWagonRecord &rec : client->latestRecords()) {
+            const QString key = normalizeEvnForMerge(rec.evn);
+            if (!key.isEmpty() && evnToIndex.contains(key)) {
+                // Gleicher Waggon aus zwei Diensten (z. B. DB link2rail + Wascosa): intelligent anreichern!
+                Link2RailWagonRecord &dst = merged[evnToIndex.value(key)];
+                if (!dst.hasValidGps && rec.hasValidGps) {
+                    dst.hasValidGps = true;
+                    dst.rawLat = rec.rawLat;
+                    dst.rawLon = rec.rawLon;
+                }
+                if (dst.trainNumber.isEmpty() && !rec.trainNumber.isEmpty()) dst.trainNumber = rec.trainNumber;
+                if (dst.locationName.isEmpty() && !rec.locationName.isEmpty()) dst.locationName = rec.locationName;
+                if (dst.geofenceSite.isEmpty() && !rec.geofenceSite.isEmpty()) dst.geofenceSite = rec.geofenceSite;
+                if (dst.cargoDescription.isEmpty() && !rec.cargoDescription.isEmpty()) dst.cargoDescription = rec.cargoDescription;
+                if (dst.weightTons <= 0.1 && rec.weightTons > 0.1) dst.weightTons = rec.weightTons;
+                if (!dst.providerName.contains(rec.providerName)) {
+                    dst.providerName += QStringLiteral(" + ") + rec.providerName;
+                }
+                for (auto it = rec.rawAttributes.constBegin(); it != rec.rawAttributes.constEnd(); ++it) {
+                    dst.rawAttributes.insert(rec.providerKey + QStringLiteral(".") + it.key(), it.value());
+                }
+            } else {
+                if (!key.isEmpty()) {
+                    evnToIndex.insert(key, merged.size());
+                }
+                merged.append(rec);
+            }
+        }
+    }
+    return merged;
+}
+
+void MainWindowSHSLogistics::rebuildUnifiedLiveData()
+{
+    const auto unified = collectUnifiedRecords();
+    m_mapWidget->applyLink2RailRecords(unified);
+    updateHeaderAndConnectionUi();
+}
+
+void MainWindowSHSLogistics::onLiveFilterChanged()
+{
+    refreshLiveWagonTable();
+}
+
+void MainWindowSHSLogistics::refreshLiveWagonTable()
 {
     m_updatingUi = true;
+    m_filteredRows.clear();
 
-    m_comboTrain->clear();
+    const QString provFilter = m_comboProviderFilter ? m_comboProviderFilter->currentData().toString() : QString();
+    const QString query = m_editSearchFilter ? m_editSearchFilter->text().trimmed().toLower() : QString();
+    const int catFilter = m_comboCategoryFilter ? m_comboCategoryFilter->currentIndex() : 0;
     const auto &trains = m_mapWidget->trains();
-    for (const TrainConsist &tr : trains) {
-        const QString prefix = tr.hasLocomotive ? QStringLiteral("🚂 ") : QStringLiteral("🅿️ ");
-        m_comboTrain->addItem(QString("%1%2 — %3 (%4 Wg.)")
-                                  .arg(prefix, tr.id, tr.name)
-                                  .arg(tr.wagons.size()));
-    }
 
-    m_comboTrackAssign->clear();
-    const auto &tracks = m_mapWidget->tracks();
-    for (const RailTrack &tk : tracks) {
-        m_comboTrackAssign->addItem(QString("%1 (%2)").arg(tk.id, tk.name), tk.id);
-    }
+    int totalWagons = 0;
+    int totalGps = 0;
 
-    const int selTrain = std::clamp(m_mapWidget->selectedTrainIndex(), 0, static_cast<int>(trains.size()) - 1);
-    m_comboTrain->setCurrentIndex(selTrain);
+    for (int tIdx = 0; tIdx < trains.size(); ++tIdx) {
+        const TrainConsist &tr = trains[tIdx];
+        for (int wIdx = 0; wIdx < tr.wagons.size(); ++wIdx) {
+            const WagonData &w = tr.wagons[wIdx];
+            totalWagons++;
+            if (w.hasValidGps) totalGps++;
 
-    if (selTrain >= 0 && selTrain < trains.size()) {
-        const TrainConsist &tr = trains[selTrain];
-        m_spinWagonCount->setValue(tr.wagons.size());
-        const int tkIdx = m_comboTrackAssign->findData(tr.trackId);
-        if (tkIdx >= 0) {
-            m_comboTrackAssign->setCurrentIndex(tkIdx);
+            if (!provFilter.isEmpty() && w.providerKey != provFilter) {
+                continue;
+            }
+            if (catFilter > 0 && static_cast<int>(w.category) != (catFilter - 1)) {
+                continue;
+            }
+            if (!query.isEmpty()) {
+                const QString hay = (w.providerName + ' ' + w.uicNumber + ' ' + tr.id + ' ' + w.wagonTypeRaw + ' ' +
+                                     w.locationName + ' ' + w.geofenceSite + ' ' + w.locationCode + ' ' +
+                                     w.liveStatusText + ' ' + w.cargoDescription + ' ' +
+                                     w.originName + ' ' + w.destinationName).toLower();
+                if (!hay.contains(query)) {
+                    continue;
+                }
+            }
+            m_filteredRows.append({tIdx, wIdx});
         }
     }
 
-    m_spinLocoPool->setValue(m_mapWidget->totalLocomotivesInPool());
+    m_tableLiveWagons->setRowCount(m_filteredRows.size());
+    for (int row = 0; row < m_filteredRows.size(); ++row) {
+        const auto ref = m_filteredRows[row];
+        const TrainConsist &tr = trains[ref.trainIdx];
+        const WagonData &w = tr.wagons[ref.wagonIdx];
+
+        auto *itPrv = new QTableWidgetItem(w.providerName);
+        itPrv->setBackground(w.providerColor.isValid() ? w.providerColor : QColor("#0D9488"));
+        itPrv->setForeground(Qt::white);
+
+        auto *itEvn = new QTableWidgetItem(w.uicNumber);
+        auto *itTrn = new QTableWidgetItem(tr.isSingleWagon ? QStringLiteral("-") : tr.id);
+        auto *itTyp = new QTableWidgetItem(w.wagonTypeRaw);
+        const QString stTxt = !w.lastEventType.isEmpty()
+                                  ? QString("%1 (%2)").arg(w.liveStatusText, w.lastEventType)
+                                  : (w.liveStatusText.isEmpty() ? QStringLiteral("Aktiv") : w.liveStatusText);
+        auto *itSt  = new QTableWidgetItem(stTxt);
+        const QString loc = !w.geofenceSite.isEmpty() ? w.geofenceSite
+                                                      : (!w.locationName.isEmpty() ? w.locationName : w.locationCode);
+        auto *itLoc = new QTableWidgetItem(loc.isEmpty() ? QStringLiteral("-") : loc);
+        auto *itGps = new QTableWidgetItem(w.hasValidGps
+                                               ? QString("%1, %2").arg(w.rawGpsLat, 0, 'f', 4).arg(w.rawGpsLon, 0, 'f', 4)
+                                               : QStringLiteral("kein GPS"));
+        auto *itTs  = new QTableWidgetItem(w.timestampIso.isEmpty() ? QStringLiteral("-") : w.timestampIso);
+
+        const QColor c = RailMapWidget::colorForWagon(w.category, m_mapWidget->wagonColorMode());
+        itTyp->setBackground(c);
+        itTyp->setForeground(Qt::white);
+
+        m_tableLiveWagons->setItem(row, 0, itPrv);
+        m_tableLiveWagons->setItem(row, 1, itEvn);
+        m_tableLiveWagons->setItem(row, 2, itTrn);
+        m_tableLiveWagons->setItem(row, 3, itTyp);
+        m_tableLiveWagons->setItem(row, 4, itSt);
+        m_tableLiveWagons->setItem(row, 5, itLoc);
+        m_tableLiveWagons->setItem(row, 6, itGps);
+        m_tableLiveWagons->setItem(row, 7, itTs);
+
+        if (ref.trainIdx == m_mapWidget->selectedTrainIndex() &&
+            ref.wagonIdx == m_mapWidget->selectedWagonIndex()) {
+            m_tableLiveWagons->selectRow(row);
+        }
+    }
+
+    m_lblLiveSummary->setText(
+        QString("Angezeigt: %1 von %2 Waggons (%3 mit GPS) aus allen aktiven Telematik-Diensten")
+            .arg(m_filteredRows.size()).arg(totalWagons).arg(totalGps));
+
     m_updatingUi = false;
-    updateLiveTelemetryLabels();
+    refreshSelectedWagonInspector();
 }
 
-void MainWindowSHSLogistics::refreshWagonTable()
+void MainWindowSHSLogistics::refreshSelectedWagonInspector()
 {
-    m_updatingUi = true;
+    m_tableWagonDetails->setRowCount(0);
+    const int tIdx = m_mapWidget->selectedTrainIndex();
+    const int wIdx = m_mapWidget->selectedWagonIndex();
     const auto &trains = m_mapWidget->trains();
-    const int selTrain = m_mapWidget->selectedTrainIndex();
+    if (tIdx < 0 || tIdx >= trains.size()) return;
+    const TrainConsist &tr = trains[tIdx];
+    const int actualW = (wIdx >= 0 && wIdx < tr.wagons.size()) ? wIdx : (tr.wagons.isEmpty() ? -1 : 0);
+    if (actualW < 0) return;
 
-    if (selTrain < 0 || selTrain >= trains.size()) {
-        m_tableWagons->setRowCount(0);
-        m_updatingUi = false;
-        return;
+    const WagonData &w = tr.wagons[actualW];
+
+    QVector<QPair<QString, QString>> rows;
+    rows.append({QStringLiteral("Telematik-Dienst"), w.providerName});
+    rows.append({QStringLiteral("UIC / EVN"), w.uicNumber});
+    rows.append({QStringLiteral("Zug / Sendung"), tr.isSingleWagon ? QStringLiteral("Einzelwaggon") : tr.id});
+    rows.append({QStringLiteral("Bauart (erkannt)"), QString("%1 -> %2 (%3 Achsen)").arg(w.wagonTypeRaw, RailMapWidget::shortCodeForWagon(w.category)).arg(w.axleCount)});
+    rows.append({QStringLiteral("GPS Rohkoordinaten"), w.hasValidGps ? QString("%1° N, %2° E").arg(w.rawGpsLat, 0, 'f', 6).arg(w.rawGpsLon, 0, 'f', 6) : QStringLiteral("Keine GPS-Daten")});
+    rows.append({QStringLiteral("Gleis-Snapping"), w.isSnappedToTrack ? QString("Ja (%1)").arg(tr.trackId) : QStringLiteral("Freie GPS-Position")});
+    rows.append({QStringLiteral("Status / Ereignis"), QString("%1 %2").arg(w.liveStatusText, w.lastEventType.isEmpty() ? QString() : QString("(%1)").arg(w.lastEventType)).trimmed()});
+    rows.append({QStringLiteral("Ort / Betriebsstelle"), QString("%1 %2").arg(w.locationName, w.locationCode.isEmpty() ? QString() : QString("[%1]").arg(w.locationCode)).trimmed()});
+    rows.append({QStringLiteral("Geofence / Werk"), w.geofenceSite.isEmpty() ? QStringLiteral("-") : w.geofenceSite});
+    rows.append({QStringLiteral("Geschwindigkeit / Standzeit"), QString("%1 km/h | Standzeit: %2 min").arg(w.speedKmh, 0, 'f', 1).arg(w.standingTimeMinutes)});
+    rows.append({QStringLiteral("Route (Quelle -> Ziel)"), QString("%1 -> %2").arg(w.originName.isEmpty() ? QStringLiteral("-") : w.originName, w.destinationName.isEmpty() ? QStringLiteral("-") : w.destinationName)});
+    rows.append({QStringLiteral("Fracht / Gewicht"), QString("%1 (%2 t)").arg(w.cargoDescription).arg(w.weightTons, 0, 'f', 1)});
+    rows.append({QStringLiteral("Zeitstempel / Quelle"), QString("%1 [%2]").arg(w.timestampIso.isEmpty() ? QStringLiteral("-") : w.timestampIso, w.sourceEndpoint)});
+
+    for (auto it = w.rawAttributes.constBegin(); it != w.rawAttributes.constEnd(); ++it) {
+        rows.append({QStringLiteral("raw.") + it.key(), it.value().toString()});
     }
 
-    const TrainConsist &tr = trains[selTrain];
-    m_spinWagonCount->setValue(tr.wagons.size());
-    m_tableWagons->setRowCount(tr.wagons.size());
-
-    for (int i = 0; i < tr.wagons.size(); ++i) {
-        const WagonData &w = tr.wagons[i];
-        const QColor badgeCol = RailMapWidget::colorForWagon(w.category, m_mapWidget->wagonColorMode());
-
-        auto *itemPos   = new QTableWidgetItem(QString("#%1").arg(w.positionIndex));
-        auto *itemType  = new QTableWidgetItem(RailMapWidget::shortCodeForWagon(w.category));
-        auto *itemAxles = new QTableWidgetItem(QString("%1-Achser").arg(w.axleCount));
-        auto *itemCargo = new QTableWidgetItem(RailMapWidget::productName(w.productType));
-        auto *itemTons  = new QTableWidgetItem(QString("%1 t").arg(w.weightTons, 0, 'f', 0));
-        auto *itemGps   = new QTableWidgetItem(QString("%1, %2 (%3)")
-                                                   .arg(w.currentLat, 0, 'f', 4)
-                                                   .arg(w.currentLon, 0, 'f', 4)
-                                                   .arg(w.uicNumber));
-
-        itemPos->setTextAlignment(Qt::AlignCenter);
-        itemAxles->setTextAlignment(Qt::AlignCenter);
-        itemTons->setTextAlignment(Qt::AlignCenter);
-
-        itemType->setBackground(badgeCol);
-        itemType->setForeground(Qt::white);
-        QFont bf = itemType->font();
-        bf.setBold(true);
-        itemType->setFont(bf);
-
-        itemAxles->setBackground(w.axleCount == 6 ? QColor(234, 88, 12, 45) : QColor(2, 132, 199, 45));
-        itemAxles->setFont(bf);
-
-        m_tableWagons->setItem(i, 0, itemPos);
-        m_tableWagons->setItem(i, 1, itemType);
-        m_tableWagons->setItem(i, 2, itemAxles);
-        m_tableWagons->setItem(i, 3, itemCargo);
-        m_tableWagons->setItem(i, 4, itemTons);
-        m_tableWagons->setItem(i, 5, itemGps);
+    m_tableWagonDetails->setRowCount(rows.size());
+    for (int i = 0; i < rows.size(); ++i) {
+        auto *kIt = new QTableWidgetItem(rows[i].first);
+        if (!rows[i].first.startsWith(QStringLiteral("raw."))) {
+            QFont f = kIt->font();
+            f.setBold(true);
+            kIt->setFont(f);
+        }
+        m_tableWagonDetails->setItem(i, 0, kIt);
+        m_tableWagonDetails->setItem(i, 1, new QTableWidgetItem(rows[i].second));
     }
-
-    const int selWagon = m_mapWidget->selectedWagonIndex();
-    if (selWagon >= 0 && selWagon < tr.wagons.size()) {
-        m_tableWagons->selectRow(selWagon);
-        m_comboEditWagonType->setCurrentIndex(static_cast<int>(tr.wagons[selWagon].category));
-        m_comboEditWagonProduct->setCurrentIndex(static_cast<int>(tr.wagons[selWagon].productType));
-    }
-
-    m_updatingUi = false;
-    updateLiveTelemetryLabels();
 }
 
-void MainWindowSHSLogistics::refreshSourcesSinksAndCargoTables()
+void MainWindowSHSLogistics::refreshNodesTable()
 {
-    m_updatingUi = true;
-
-    // 1. Quellen (Güter-Aufnahme) & Senken (Güter-Abladung) Tabelle
     const auto &nodes = m_mapWidget->sourceSinkNodes();
     m_tableNodes->setRowCount(nodes.size());
     for (int i = 0; i < nodes.size(); ++i) {
         const SourceSinkNode &n = nodes[i];
-        auto *itId    = new QTableWidgetItem(n.id);
-        auto *itRole  = new QTableWidgetItem(n.role);
-        auto *itName  = new QTableWidgetItem(n.name);
-        auto *itGoods = new QTableWidgetItem(QString("⬆️ %1 | ⬇️ %2").arg(n.producedGoods, n.consumedGoods));
-        auto *itStock = new QTableWidgetItem(QString("⬆️%1t / ⬇️%2t (%3t)")
-                                                 .arg(n.totalLoadedTons, 0, 'f', 0)
-                                                 .arg(n.totalUnloadedTons, 0, 'f', 0)
-                                                 .arg(n.currentStockTons, 0, 'f', 0));
+        m_tableNodes->setItem(i, 0, new QTableWidgetItem(n.id));
+        m_tableNodes->setItem(i, 1, new QTableWidgetItem(n.name));
+        m_tableNodes->setItem(i, 2, new QTableWidgetItem(n.role));
 
-        QFont bf = itRole->font();
-        bf.setBold(true);
-        itRole->setFont(bf);
-        itRole->setBackground(n.badgeColor);
-        itRole->setForeground(Qt::white);
-
-        m_tableNodes->setItem(i, 0, itId);
-        m_tableNodes->setItem(i, 1, itRole);
-        m_tableNodes->setItem(i, 2, itName);
-        m_tableNodes->setItem(i, 3, itGoods);
-        m_tableNodes->setItem(i, 4, itStock);
-    }
-
-    // 2. Güter-Objekte (Cargo Orders) Tabelle
-    const auto &orders = m_mapWidget->cargoOrders();
-    m_tableCargoOrders->setRowCount(orders.size());
-    for (int i = 0; i < orders.size(); ++i) {
-        const CargoOrder &o = orders[i];
-        auto *itId    = new QTableWidgetItem(o.orderId);
-        auto *itProd  = new QTableWidgetItem(RailMapWidget::productShortName(o.product));
-        auto *itTons  = new QTableWidgetItem(QString("%1 t").arg(o.weightTons, 0, 'f', 0));
-        auto *itRoute = new QTableWidgetItem(QString("⬆️%1 -> ⬇️%2").arg(o.sourceNodeId, o.sinkNodeId));
-        auto *itWag   = new QTableWidgetItem(QString("%1x %2")
-                                                 .arg(o.wagonCountUsed)
-                                                 .arg(RailMapWidget::shortCodeForWagon(o.preferredWagon)));
-
-        QString statusText;
-        QColor statusColor;
-        switch (o.status) {
-        case CargoOrderStatus::LoadingAtSource:
-            statusText = QStringLiteral("⬆️ AUFNAHME AN QUELLE (%1)").arg(o.sourceNodeId);
-            statusColor = QColor("#15803D");
-            break;
-        case CargoOrderStatus::StoredOnParkedWagons:
-            statusText = QStringLiteral("🅿️ GELAGERT OHNE LOK (%1)").arg(o.assignedConsistId);
-            statusColor = QColor("#9333EA");
-            break;
-        case CargoOrderStatus::InTransit:
-            statusText = QStringLiteral("🚛 UNTERWEGS -> SENKE (%1)").arg(o.sinkNodeId);
-            statusColor = QColor("#059669");
-            break;
-        case CargoOrderStatus::UnloadingAtSink:
-            statusText = QStringLiteral("⬇️ ABLADUNG AN SENKE (%1)").arg(o.sinkNodeId);
-            statusColor = QColor("#0284C7");
-            break;
-        case CargoOrderStatus::DeliveredToSink:
-            statusText = QStringLiteral("✅ AN SENKE ABGELADEN (%1)").arg(o.sinkNodeId);
-            statusColor = QColor("#0D9488");
-            break;
-        case CargoOrderStatus::AtSourceStorage:
-        default:
-            statusText = QStringLiteral("📦 Bereit an Quelle");
-            statusColor = QColor("#475569");
-            break;
+        auto *itCnt = new QTableWidgetItem(QString("%1 Waggon(s)").arg(n.liveWagonCount));
+        if (n.liveWagonCount > 0) {
+            itCnt->setBackground(QColor("#065F46"));
+            itCnt->setForeground(Qt::white);
         }
-        auto *itStat = new QTableWidgetItem(statusText);
-        itStat->setBackground(statusColor);
-        itStat->setForeground(Qt::white);
-        QFont bf = itStat->font();
-        bf.setBold(true);
-        itStat->setFont(bf);
-
-        m_tableCargoOrders->setItem(i, 0, itId);
-        m_tableCargoOrders->setItem(i, 1, itProd);
-        m_tableCargoOrders->setItem(i, 2, itTons);
-        m_tableCargoOrders->setItem(i, 3, itRoute);
-        m_tableCargoOrders->setItem(i, 4, itWag);
-        m_tableCargoOrders->setItem(i, 5, itStat);
+        m_tableNodes->setItem(i, 3, itCnt);
+        m_tableNodes->setItem(i, 4, new QTableWidgetItem(n.producedGoods + QStringLiteral(" / ") + n.consumedGoods));
     }
-
-    m_updatingUi = false;
-    updateLiveTelemetryLabels();
 }
 
-void MainWindowSHSLogistics::updateLiveTelemetryLabels()
+void MainWindowSHSLogistics::updateHeaderAndConnectionUi()
 {
-    const auto &trains = m_mapWidget->trains();
-    int totalWagons = 0;
-    int totalSamms = 0, totalRnsz = 0, total4A = 0, total6A = 0;
-    int parkedGroups = 0;
+    int activeCnt = 0;
+    QStringList activeNames;
+    QDateTime latestSync;
 
-    for (const TrainConsist &tr : trains) {
-        if (!tr.hasLocomotive) {
-            ++parkedGroups;
+    for (int i = 0; i < m_clients.size(); ++i) {
+        Link2RailClient *c = m_clients[i];
+        const bool isAuth = c->isAuthenticated();
+        const int recCnt = c->latestRecords().size();
+        if (isAuth) {
+            activeCnt++;
+            activeNames << c->info().shortName;
         }
-        totalWagons += tr.wagons.size();
-        for (const WagonData &w : tr.wagons) {
-            if (w.category == WagonCategory::Samms_6Axle) ++totalSamms;
-            if (w.category == WagonCategory::Rnsz_4Axle)  ++totalRnsz;
-            if (w.axleCount == 4) ++total4A;
-            if (w.axleCount == 6) ++total6A;
+        if (c->lastSyncTime().isValid() && (!latestSync.isValid() || c->lastSyncTime() > latestSync)) {
+            latestSync = c->lastSyncTime();
+        }
+        if (m_providerLoginTabs && i < m_providerLoginTabs->count()) {
+            const QString dot = isAuth ? QStringLiteral("🟢 ") : (recCnt > 0 ? QStringLiteral("🟡 ") : QStringLiteral("🔴 "));
+            m_providerLoginTabs->setTabText(i, dot + c->info().tabLabel);
         }
     }
 
-    m_lblHeaderStats->setText(
-        QString("Loks: %1/%2  |  Gelagerte Gruppen ohne Lok: %3  |  Waggons: %4 (Samms [6A]: %5 | Rns-z [4A]: %6)")
-            .arg(m_mapWidget->usedLocomotivesCount())
-            .arg(m_mapWidget->totalLocomotivesInPool())
-            .arg(parkedGroups)
-            .arg(totalWagons)
-            .arg(totalSamms)
-            .arg(totalRnsz));
+    const int totalW = m_mapWidget->totalLiveWagonsCount();
+    const int gpsW = m_mapWidget->totalLiveGpsWagonsCount();
+    const QString syncStr = latestSync.isValid() ? latestSync.toString(QStringLiteral("HH:mm:ss")) : QStringLiteral("—");
+    const QString summaryStr = activeNames.join(QStringLiteral(", "));
 
-    m_lblLocoStatus->setText(
-        QString("Lokomotiven im Einsatz: %1 von %2  |  Freie Loks: %3  |  Auf Gleisen zwischengelagerte Waggongruppen ohne Lok: %4")
-            .arg(m_mapWidget->usedLocomotivesCount())
-            .arg(m_mapWidget->totalLocomotivesInPool())
-            .arg(m_mapWidget->freeLocomotivesCount())
-            .arg(parkedGroups));
+    m_mapWidget->setMultiProviderStatus(activeCnt, m_clients.size(), summaryStr, syncStr);
 
-    const int selTrain = m_mapWidget->selectedTrainIndex();
-    if (selTrain >= 0 && selTrain < trains.size()) {
-        const TrainConsist &tr = trains[selTrain];
-        double totalTons = 0.0;
-        for (const WagonData &w : tr.wagons) {
-            totalTons += w.weightTons;
-        }
-        m_lblTrainSummary->setText(
-            QString("%1  |  ⬆️ Quelle: %2 -> ⬇️ Senke: %3  |  Ladung: %4 t (%5 Zyklen)")
-                .arg(RailMapWidget::operationStateText(tr))
-                .arg(tr.sourceNodeId, tr.sinkNodeId)
-                .arg(totalTons, 0, 'f', 0)
-                .arg(tr.completedDeliveries));
+    if (activeCnt > 0) {
+        m_lblHeaderStats->setText(
+            QString("🟢 Dienste aktiv: %1/%2 (%3)  |  Waggons: %4 (GPS: %5)  |  Sync: %6")
+                .arg(activeCnt).arg(m_clients.size()).arg(summaryStr).arg(totalW).arg(gpsW).arg(syncStr));
+        m_btnToolbarLogins->setText(QString("🟢 Dienste && Logins (%1/%2)").arg(activeCnt).arg(m_clients.size()));
+        m_btnToolbarLogins->setStyleSheet(
+            "QPushButton { background-color: #15803D; color: #FFFFFF; border: 1px solid #1E293B; padding: 5px 10px; font-weight: bold; } "
+            "QPushButton:hover { background-color: #FBD50E; color: #0F172A; }");
+    } else {
+        m_lblHeaderStats->setText(
+            QString("🔴 Dienste aktiv: 0/%1  |  Geladene Waggons: %2 (GPS: %3)")
+                .arg(m_clients.size()).arg(totalW).arg(gpsW));
+        m_btnToolbarLogins->setText(QString("🔐 Dienste && Logins (0/%1)").arg(m_clients.size()));
+        m_btnToolbarLogins->setStyleSheet(
+            "QPushButton { background-color: #DC2626; color: #FFFFFF; border: 1px solid #1E293B; padding: 5px 10px; font-weight: bold; } "
+            "QPushButton:hover { background-color: #FBD50E; color: #0F172A; }");
+    }
+
+    if (m_bannerNotLoggedIn) {
+        m_bannerNotLoggedIn->setVisible(activeCnt == 0 && totalW == 0);
     }
 }
 
-void MainWindowSHSLogistics::onTrainComboChanged(int index)
-{
-    if (m_updatingUi || index < 0) return;
-    m_mapWidget->selectTrain(index, 0, true);
-    refreshTrainSelectorAndControls();
-    refreshWagonTable();
-}
-
-void MainWindowSHSLogistics::onWagonTableClicked(int row, int column)
+void MainWindowSHSLogistics::onLiveWagonTableClicked(int row, int column)
 {
     Q_UNUSED(column);
-    if (m_updatingUi) return;
-    m_mapWidget->selectTrain(m_mapWidget->selectedTrainIndex(), row, false);
-    const auto &trains = m_mapWidget->trains();
-    const int tIdx = m_mapWidget->selectedTrainIndex();
-    if (tIdx >= 0 && tIdx < trains.size() && row >= 0 && row < trains[tIdx].wagons.size()) {
-        m_updatingUi = true;
-        m_comboEditWagonType->setCurrentIndex(static_cast<int>(trains[tIdx].wagons[row].category));
-        m_comboEditWagonProduct->setCurrentIndex(static_cast<int>(trains[tIdx].wagons[row].productType));
-        m_updatingUi = false;
-    }
+    if (m_updatingUi || row < 0 || row >= m_filteredRows.size()) return;
+    const auto ref = m_filteredRows[row];
+    m_mapWidget->selectTrain(ref.trainIdx, ref.wagonIdx, false);
+    refreshSelectedWagonInspector();
 }
 
-void MainWindowSHSLogistics::onWagonTableDoubleClicked(int row, int column)
+void MainWindowSHSLogistics::onLiveWagonTableDoubleClicked(int row, int column)
 {
     Q_UNUSED(column);
-    m_mapWidget->zoomToWagon(m_mapWidget->selectedTrainIndex(), row);
+    if (row < 0 || row >= m_filteredRows.size()) return;
+    const auto ref = m_filteredRows[row];
+    m_mapWidget->zoomToWagon(ref.trainIdx, ref.wagonIdx);
 }
 
 void MainWindowSHSLogistics::onMapSelectionChanged(int trainIdx, int wagonIdx)
 {
     Q_UNUSED(trainIdx);
     Q_UNUSED(wagonIdx);
-    refreshTrainSelectorAndControls();
-    refreshWagonTable();
+    if (m_updatingUi) return;
+    refreshLiveWagonTable();
 }
 
 void MainWindowSHSLogistics::onTrainsUpdated()
 {
-    refreshTrainSelectorAndControls();
-    refreshWagonTable();
-    refreshSourcesSinksAndCargoTables();
+    refreshLiveWagonTable();
+    updateHeaderAndConnectionUi();
 }
 
-void MainWindowSHSLogistics::onCargoAndNodesUpdated()
+void MainWindowSHSLogistics::onNodesUpdated()
 {
-    refreshSourcesSinksAndCargoTables();
-}
-
-void MainWindowSHSLogistics::onSimStepped()
-{
-    ++m_stepCounter;
-    if (m_stepCounter % 6 == 0) {
-        updateLiveTelemetryLabels();
-    }
-    if (m_stepCounter % 18 != 0) return;
-    const auto &trains = m_mapWidget->trains();
-    const int selTrain = m_mapWidget->selectedTrainIndex();
-    if (selTrain < 0 || selTrain >= trains.size()) return;
-    const TrainConsist &tr = trains[selTrain];
-    if (m_tableWagons->rowCount() != tr.wagons.size()) {
-        refreshWagonTable();
-        return;
-    }
-    for (int i = 0; i < tr.wagons.size(); ++i) {
-        if (QTableWidgetItem *it = m_tableWagons->item(i, 5)) {
-            it->setText(QString("%1, %2 (%3)")
-                            .arg(tr.wagons[i].currentLat, 0, 'f', 4)
-                            .arg(tr.wagons[i].currentLon, 0, 'f', 4)
-                            .arg(tr.wagons[i].uicNumber));
-        }
-    }
-}
-
-void MainWindowSHSLogistics::onAddSammsClicked()
-{
-    m_mapWidget->appendWagonToTrain(m_mapWidget->selectedTrainIndex(), WagonCategory::Samms_6Axle, CargoProductType::SteelBillets);
-}
-
-void MainWindowSHSLogistics::onAddRnszClicked()
-{
-    m_mapWidget->appendWagonToTrain(m_mapWidget->selectedTrainIndex(), WagonCategory::Rnsz_4Axle, CargoProductType::HeavyPlates);
-}
-
-void MainWindowSHSLogistics::onAdd4AxleClicked()
-{
-    m_mapWidget->appendWagonToTrain(m_mapWidget->selectedTrainIndex(), WagonCategory::Standard_4Axle, CargoProductType::WireRodCoils);
-}
-
-void MainWindowSHSLogistics::onAdd6AxleClicked()
-{
-    m_mapWidget->appendWagonToTrain(m_mapWidget->selectedTrainIndex(), WagonCategory::Heavy_6Axle, CargoProductType::LiquidPigIron);
-}
-
-void MainWindowSHSLogistics::onRemoveWagonClicked()
-{
-    m_mapWidget->removeLastWagonFromTrain(m_mapWidget->selectedTrainIndex());
-}
-
-void MainWindowSHSLogistics::onWagonCountSpinChanged(int count)
-{
-    if (m_updatingUi) return;
-    const auto chosenCat = static_cast<WagonCategory>(m_comboEditWagonType->currentIndex());
-    m_mapWidget->setTrainWagonCount(m_mapWidget->selectedTrainIndex(), count, chosenCat);
-}
-
-void MainWindowSHSLogistics::onChangeSelectedWagonCategory()
-{
-    const int tIdx = m_mapWidget->selectedTrainIndex();
-    int wIdx = m_mapWidget->selectedWagonIndex();
-    if (wIdx < 0) wIdx = 0;
-    const auto cat  = static_cast<WagonCategory>(m_comboEditWagonType->currentIndex());
-    const auto prod = static_cast<CargoProductType>(m_comboEditWagonProduct->currentIndex());
-    m_mapWidget->setWagonCategoryAt(tIdx, wIdx, cat);
-    m_mapWidget->setWagonProductAt(tIdx, wIdx, prod);
-}
-
-void MainWindowSHSLogistics::onLocoPoolSpinChanged(int totalLocos)
-{
-    if (m_updatingUi) return;
-    m_mapWidget->setTotalLocomotivesInPool(totalLocos);
-}
-
-void MainWindowSHSLogistics::onCoupleLocoClicked()
-{
-    m_mapWidget->coupleFreeLocoToConsist(m_mapWidget->selectedTrainIndex());
-}
-
-void MainWindowSHSLogistics::onUncoupleLocoClicked()
-{
-    m_mapWidget->uncoupleLocoFromConsist(m_mapWidget->selectedTrainIndex());
-}
-
-void MainWindowSHSLogistics::onNewOrderProductChanged(int index)
-{
-    if (index < 0) return;
-    const auto prod = static_cast<CargoProductType>(index);
-    const WagonCategory recWagon = RailMapWidget::recommendedWagonForProduct(prod);
-    m_comboNewWagonCat->setCurrentIndex(static_cast<int>(recWagon));
-
-    const QString defSrc = RailMapWidget::defaultSourceForProduct(prod);
-    const QString defDst = RailMapWidget::defaultSinkForProduct(prod);
-    const int srcIdx = m_comboNewSource->findData(defSrc);
-    const int dstIdx = m_comboNewSink->findData(defDst);
-    if (srcIdx >= 0) m_comboNewSource->setCurrentIndex(srcIdx);
-    if (dstIdx >= 0) m_comboNewSink->setCurrentIndex(dstIdx);
-}
-
-void MainWindowSHSLogistics::onCreateCargoOrderClicked()
-{
-    const auto prod = static_cast<CargoProductType>(m_comboNewProduct->currentIndex());
-    const double tons = m_spinNewTons->value();
-    const QString srcId = m_comboNewSource->currentData().toString();
-    const QString dstId = m_comboNewSink->currentData().toString();
-    const auto wCat = static_cast<WagonCategory>(m_comboNewWagonCat->currentIndex());
-    m_mapWidget->createAndDistributeCargoOrder(prod, tons, srcId, dstId, wCat);
+    refreshNodesTable();
 }
 
 void MainWindowSHSLogistics::onNodeTableClicked(int row, int column)
@@ -1327,87 +1187,15 @@ void MainWindowSHSLogistics::onNodeTableClicked(int row, int column)
     m_mapWidget->zoomToSourceSinkNode(row);
 }
 
-void MainWindowSHSLogistics::onCargoOrderTableClicked(int row, int column)
-{
-    Q_UNUSED(column);
-    const auto &orders = m_mapWidget->cargoOrders();
-    if (row < 0 || row >= orders.size()) return;
-    const QString consistId = orders[row].assignedConsistId;
-    const auto &trains = m_mapWidget->trains();
-    for (int i = 0; i < trains.size(); ++i) {
-        if (trains[i].id == consistId) {
-            m_mapWidget->selectTrain(i, 0, true);
-            break;
-        }
-    }
-}
-
-void MainWindowSHSLogistics::onToggleSimClicked()
-{
-    const bool nextState = !m_mapWidget->isSimulationRunning();
-    m_mapWidget->setSimulationRunning(nextState);
-    m_btnPlayPause->setText(nextState ? QStringLiteral("⏸ Simulation Pause")
-                                      : QStringLiteral("▶ Simulation Start"));
-}
-
-void MainWindowSHSLogistics::onReverseTrainClicked()
-{
-    m_mapWidget->reverseTrainDirection(m_mapWidget->selectedTrainIndex());
-}
-
-void MainWindowSHSLogistics::onTrackAssignChanged(int index)
-{
-    if (m_updatingUi || index < 0) return;
-    const QString trackId = m_comboTrackAssign->itemData(index).toString();
-    m_mapWidget->assignTrainToTrack(m_mapWidget->selectedTrainIndex(), trackId);
-}
-
-void MainWindowSHSLogistics::onSpeedSliderChanged(int val)
-{
-    const double factor = val / 10.0;
-    m_lblSimSpeedVal->setText(QString("%1x").arg(factor, 0, 'f', 1));
-    m_mapWidget->setSimulationSpeedMultiplier(factor);
-}
-
 void MainWindowSHSLogistics::onColorModeChanged(int index)
 {
     m_mapWidget->setWagonColorMode(static_cast<WagonColorMode>(index));
-    refreshWagonTable();
+    refreshLiveWagonTable();
 }
 
 void MainWindowSHSLogistics::onMapModeChanged(int index)
 {
     m_mapWidget->setMapBackgroundMode(static_cast<MapBackgroundMode>(index));
-}
-
-void MainWindowSHSLogistics::onRandomizeAllClicked()
-{
-    m_mapWidget->randomizePositionsOnTracks(false);
-}
-
-void MainWindowSHSLogistics::onRandomizeVoelklingenClicked()
-{
-    m_mapWidget->randomizePositionsOnTracks(true);
-    m_mapWidget->focusSite(QStringLiteral("Voelklingen"), true);
-}
-
-void MainWindowSHSLogistics::onQueryDbApiClicked()
-{
-    m_mapWidget->triggerLiveNetworkApiQuery(
-        m_editApiUrl->text(),
-        m_editClientId->text(),
-        m_editApiKey->text());
-}
-
-void MainWindowSHSLogistics::onAutoPollToggled(bool checked)
-{
-    if (checked) {
-        m_apiPollTimer->start();
-        statusBar()->showMessage(QStringLiteral("Automatische Bahn-API Synchronisation aktiviert (Intervall: 5 s)."));
-    } else {
-        m_apiPollTimer->stop();
-        statusBar()->showMessage(QStringLiteral("Automatische Bahn-API Synchronisation gestoppt."));
-    }
 }
 
 void MainWindowSHSLogistics::onPrintMap()
@@ -1418,8 +1206,7 @@ void MainWindowSHSLogistics::onPrintMap()
         QPainter p(&printer);
         const QPixmap pm = m_mapWidget->grab();
         const QRect vp = p.viewport();
-        QSize sz = pm.size();
-        sz.scale(vp.size(), Qt::KeepAspectRatio);
+        const QSize sz = pm.size().scaled(vp.size(), Qt::KeepAspectRatio);
         p.setViewport(vp.x(), vp.y(), sz.width(), sz.height());
         p.setWindow(pm.rect());
         p.drawPixmap(0, 0, pm);
@@ -1429,32 +1216,31 @@ void MainWindowSHSLogistics::onPrintMap()
 void MainWindowSHSLogistics::onShowAboutDialog()
 {
     QMessageBox aboutBox(this);
-    aboutBox.setWindowTitle(QStringLiteral("Über SHS Logistics GmbH – Werksbahn- & Güter-Disposition"));
+    aboutBox.setWindowTitle(QStringLiteral("Über SHS Logistics GmbH – Multi-Telematik Live-GPS-Leitsystem"));
     aboutBox.setTextFormat(Qt::RichText);
     aboutBox.setIconPixmap(QPixmap(QStringLiteral(":/SHSIcon.png")).scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     aboutBox.setText(QStringLiteral(
         "<h2 style='color:#3B464E; margin-bottom:2px;'>SHS LOGISTICS GmbH</h2>"
-        "<h4 style='color:#EF7D00; margin-top:0px;'>Werksbahn-, Waggon-, Güter- &amp; Bahn-API-Leitsystem</h4>"
+        "<h4 style='color:#EF7D00; margin-top:0px;'>Multi-Telematik Live-GPS-, Waggon- &amp; Werksbahn-Leitsystem</h4>"
         "<p style='color:#5C839C; font-style:italic;'>Partner [schafft Zukunft] Stahl</p>"
         "<hr style='border:0; height:1px; background:#CBD5E1;'>"
         "<table style='font-size:11px;' cellpadding='2'>"
-        "<tr><td><b>Version:</b></td><td><b>" SHS_APP_VERSION "</b></td></tr>"
-        "<tr><td><b>Wissenschaftliche Leitung &amp; Entwicklung:</b></td><td><b>Frank U. Rückert</b></td></tr>"
-        "<tr><td><b>Kontakt / E-Mail:</b></td><td><a href='mailto:frank.rueckert@htwsaar.de' style='color:#0284C7; font-weight:bold;'>frank.rueckert@htwsaar.de</a></td></tr>"
+        "<tr><td><b>Version:</b></td><td><b>" SHS_APP_VERSION " (Multi-Telematik Live-GPS Edition – 6 Portale)</b></td></tr>"
+        "<tr><td><b>Wissenschaftliche Leitung &amp; Entwicklung:</b></td><td><b>Frank U. Rückert</b> (<a href='mailto:frank.rueckert@htwsaar.de' style='color:#0284C7; font-weight:bold;'>frank.rueckert@htwsaar.de</a>)</td></tr>"
+        "<tr><td><b>Entwicklerin:</b></td><td><b>Sevda Dawd</b> (<a href='mailto:sevdasdawd@gmail.com' style='color:#0284C7; font-weight:bold;'>sevdasdawd@gmail.com</a>)</td></tr>"
         "<tr><td><b>Institution:</b></td><td>htw saar – Hochschule für Technik und Wirtschaft des Saarlandes</td></tr>"
         "<tr><td><b>Kooperationspartner:</b></td><td>SHS Logistics GmbH (Stahl-Holding-Saar), Werkstraße 1, 66763 Dillingen/Saar</td></tr>"
-        "<tr><td><b>Webseite:</b></td><td><a href='https://www.shs-logistics.de' style='color:#EF7D00;'>www.shs-logistics.de</a></td></tr>"
-        "<tr><td><b>Software-Plattform:</b></td><td>C++17 / Qt 6.9.0 (MinGW 64-Bit, CMake + Ninja)</td></tr>"
+        "<tr><td><b>Software-Plattform:</b></td><td>C++17 / Qt 6.9.0 (MinGW 64-Bit, TLS/HTTPS SChannel, CMake + Ninja)</td></tr>"
         "</table>"
         "<hr style='border:0; height:1px; background:#CBD5E1;'>"
-        "<p><b>Integrierte Kernfunktionen:</b></p>"
+        "<p><b>Integrierte Telematik-Dienste (jeweils mit eigenem Login-Reiter auf einer gemeinsamen Karte):</b></p>"
         "<ul style='font-size:10.5px;'>"
-        "<li><b>Standorte (F1–F5):</b> Saarstahl Hauptwerk Völklingen, Dillinger Hütte &amp; ROGESA (1420 °C Flüssigroheisen), Werk Burbach (Drahtwerk), Werk Neunkirchen (Walzwerk) &amp; Gesamtkorridor.</li>"
-        "<li><b>Waggon-Disposition:</b> Samms [6A] (Orange), Rns-z [4A] (Stahlblau), 4-Achser Shimmns [4A] (Grün), Torpedopfannenwagen [6A] (Karmesinrot mit glühendem 1420 °C Kern).</li>"
-        "<li><b>4-Phasen-Logistikzyklus:</b> Quellen (⬆️ Güter-Aufnahme / Beladen) und Senken (⬇️ Güter-Abladung / Entladen) mit 2D-Verladebrücken und animiertem Ladefortschritt.</li>"
-        "<li><b>Lokomotiv-Pool &amp; Lagerung:</b> Automatisches Abstellen beladener Waggongruppen bei Lokmangel (🅿️ GELAGERT OHNE LOK).</li>"
-        "<li><b>Telematik (F9):</b> DB Cargo / SAVVY Schnittstelle mit DS100-Betriebsstellen (SVK, SDL, SBU, SNK), VzG-Streckenkilometern &amp; GPS-Track-Snapping.</li>"
-        "<li><b>Handbücher (F10/F11):</b> Technisches Handbuch (F10) und Kurzanleitung (F11) direkt als PDF im Release enthalten.</li>"
+        "<li><b>DB Cargo link2rail:</b> <code>link2rail.dbcargo.com</code> (CIDP Login API V3, Geofence Control, Track &amp; Trace)</li>"
+        "<li><b>Intermodal Telematics (IMT):</b> <code>portal.intermodaltelematics.com</code></li>"
+        "<li><b>DOT Telematik:</b> <code>portal.dot-telematik.com/login</code> (DOT-Link &amp; Unified API)</li>"
+        "<li><b>TRANSWAGGON (WOPS):</b> <code>portal.transwaggon.de/csp/wops/</code> (JSON / XML / CSV)</li>"
+        "<li><b>Innofreight OS:</b> <code>os.innofreight.com/login</code></li>"
+        "<li><b>Wascosa:</b> <code>wascosa.com</code> (inkl. Vorlagen für SAVVY® Synergy &amp; Nexxiot Connect Cloud)</li>"
         "</ul>"));
     aboutBox.setStandardButtons(QMessageBox::Ok);
     aboutBox.exec();
@@ -1462,39 +1248,34 @@ void MainWindowSHSLogistics::onShowAboutDialog()
 
 QPixmap MainWindowSHSLogistics::createCorporateSplashPixmap(int progressPercent, const QString &statusText)
 {
-    const int W = 860;
-    const int H = 510;
+    constexpr int W = 860;
+    constexpr int H = 510;
     QPixmap pm(W, H);
-    pm.fill(Qt::transparent);
+    pm.fill(QColor("#3B464E"));
 
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing, true);
     p.setRenderHint(QPainter::SmoothPixmapTransform, true);
-    p.setRenderHint(QPainter::TextAntialiasing, true);
 
-    // 1. Äußerer Rahmen im SHS Corporate Design (Stahl-Anthrazit #3B464E / #48555F)
-    QPainterPath outerPath;
-    outerPath.addRoundedRect(QRectF(2.0, 2.0, W - 4.0, H - 4.0), 10.0, 10.0);
     QLinearGradient bgGrad(0, 0, 0, H);
-    bgGrad.setColorAt(0.0, QColor("#48555F"));
-    bgGrad.setColorAt(0.55, QColor("#3B464E"));
+    bgGrad.setColorAt(0.0, QColor("#3B464E"));
+    bgGrad.setColorAt(0.5, QColor("#48555F"));
     bgGrad.setColorAt(1.0, QColor("#293238"));
-    p.fillPath(outerPath, bgGrad);
-    p.setPen(QPen(QColor("#EF7D00"), 2.5));
-    p.drawPath(outerPath);
+    p.fillRect(0, 0, W, H, bgGrad);
 
-    // 2. Oberer SHS Header-Streifen (Weiß -> Hellblau #E4EEF2 -> Stahl-Anthrazit)
-    QRectF hdrRect(14.0, 14.0, W - 28.0, 74.0);
-    QPainterPath hdrPath;
-    hdrPath.addRoundedRect(hdrRect, 7.0, 7.0);
-    QLinearGradient hdrGrad(hdrRect.left(), 0, hdrRect.right(), 0);
+    p.setPen(QPen(QColor("#EF7D00"), 3.0));
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(QRectF(2.0, 2.0, W - 4.0, H - 4.0), 8.0, 8.0);
+
+    QRectF headerRect(16.0, 14.0, W - 32.0, 74.0);
+    QLinearGradient hdrGrad(headerRect.left(), 0, headerRect.right(), 0);
     hdrGrad.setColorAt(0.0, QColor("#FFFFFF"));
-    hdrGrad.setColorAt(0.32, QColor("#E4EEF2"));
-    hdrGrad.setColorAt(0.62, QColor("#48555F"));
+    hdrGrad.setColorAt(0.36, QColor("#E4EEF2"));
+    hdrGrad.setColorAt(0.68, QColor("#48555F"));
     hdrGrad.setColorAt(1.0, QColor("#333E46"));
-    p.fillPath(hdrPath, hdrGrad);
+    p.setBrush(hdrGrad);
     p.setPen(QPen(QColor("#5C839C"), 1.5));
-    p.drawPath(hdrPath);
+    p.drawRoundedRect(headerRect, 6.0, 6.0);
 
     QPixmap logoPm(QStringLiteral(":/SHS_Logo.png"));
     if (logoPm.isNull()) {
@@ -1513,14 +1294,13 @@ QPixmap MainWindowSHSLogistics::createCorporateSplashPixmap(int progressPercent,
     p.setPen(QColor("#334155"));
     p.setFont(QFont("Verdana", 8.5, QFont::Bold));
     p.drawText(QRectF(100.0, 41.0, 500.0, 18.0), Qt::AlignLeft | Qt::AlignVCenter,
-               QStringLiteral("Partner [schafft Zukunft] Stahl — Werksbahn-, Waggon- & Güter-Leitsystem"));
+               QStringLiteral("Partner [schafft Zukunft] Stahl — Multi-Telematik Live-GPS-Leitsystem"));
 
     p.setPen(QColor("#0284C7"));
-    p.setFont(QFont("Segoe UI", 8.5, QFont::Bold));
-    p.drawText(QRectF(100.0, 60.0, 500.0, 18.0), Qt::AlignLeft | Qt::AlignVCenter,
-               QStringLiteral("Wissenschaftliche Leitung & Entwicklung: Frank U. Rückert (frank.rueckert@htwsaar.de)"));
+    p.setFont(QFont("Segoe UI", 7.8, QFont::Bold));
+    p.drawText(QRectF(100.0, 60.0, 515.0, 18.0), Qt::AlignLeft | Qt::AlignVCenter,
+               QStringLiteral("Leitung: Frank U. Rückert (frank.rueckert@htwsaar.de)  |  Entwicklung: Sevda Dawd (sevdasdawd@gmail.com)"));
 
-    // Rechts im Header: Versions-Badge
     QRectF verRect(W - 245.0, 27.0, 215.0, 44.0);
     p.setBrush(QColor(15, 23, 42, 185));
     p.setPen(QPen(QColor("#FBD50E"), 1.5));
@@ -1532,9 +1312,8 @@ QPixmap MainWindowSHSLogistics::createCorporateSplashPixmap(int progressPercent,
     p.setPen(QColor("#E2E8F0"));
     p.setFont(QFont("Segoe UI", 8));
     p.drawText(verRect.adjusted(8, 22, -8, -4), Qt::AlignCenter,
-               QStringLiteral("Völklingen | Dillingen | Burbach | NK"));
+               QStringLiteral("6 Telematik-Portale | Live-GPS"));
 
-    // 3. Hauptmotiv-Bereich mit startseite_img_de.jpg (links) + Standort-/Modul-Übersicht (rechts)
     QRectF heroImgRect(16.0, 98.0, 548.0, 308.0);
     p.setBrush(QColor("#FFFFFF"));
     p.setPen(QPen(QColor("#A2B1BE"), 2.0));
@@ -1553,88 +1332,93 @@ QPixmap MainWindowSHSLogistics::createCorporateSplashPixmap(int progressPercent,
         clipPath.addRoundedRect(innerImg, 5.0, 5.0);
         p.save();
         p.setClipPath(clipPath);
-        p.drawPixmap(innerImg.topLeft().toPoint(), scaledHero);
+        p.drawPixmap(innerImg.topLeft(), scaledHero);
         p.restore();
     }
 
-    // Rechte Infokarte im Corporate Stahlblau/Anthrazit
-    QRectF infoCard(576.0, 98.0, W - 592.0, 308.0);
-    p.setBrush(QColor("#2F3940"));
+    QRectF sideRect(576.0, 98.0, W - 592.0, 308.0);
+    p.setBrush(QColor(22, 30, 38, 228));
     p.setPen(QPen(QColor("#5C839C"), 1.5));
-    p.drawRoundedRect(infoCard, 7.0, 7.0);
+    p.drawRoundedRect(sideRect, 7.0, 7.0);
 
     p.setPen(QColor("#FBD50E"));
-    p.setFont(QFont("Segoe UI", 10, QFont::Bold));
-    p.drawText(QRectF(infoCard.left() + 12.0, infoCard.top() + 10.0, infoCard.width() - 24.0, 22.0),
+    p.setFont(QFont("Verdana", 9.2, QFont::Bold));
+    p.drawText(QRectF(sideRect.left() + 12, sideRect.top() + 10, sideRect.width() - 24, 22),
                Qt::AlignLeft | Qt::AlignVCenter,
-               QStringLiteral("INTEGRIERTE WERKE & MODULE"));
+               QStringLiteral("INTEGRIERTE TELEMATIK-DIENSTE"));
+    p.setPen(QPen(QColor("#EF7D00"), 2.0));
+    p.drawLine(QPointF(sideRect.left() + 12, sideRect.top() + 34),
+               QPointF(sideRect.right() - 12, sideRect.top() + 34));
 
-    p.setPen(QPen(QColor("#EF7D00"), 1.5));
-    p.drawLine(QPointF(infoCard.left() + 12.0, infoCard.top() + 34.0),
-               QPointF(infoCard.right() - 12.0, infoCard.top() + 34.0));
-
-    const QStringList features = {
-        QStringLiteral("🏭 Werk Völklingen (Saarstahl AG)\n    LD-Stahlwerk, Strangguss, Walzwerk"),
-        QStringLiteral("🔥 Dillinger Hütte & ROGESA\n    Hochöfen (1420 °C), Brammen, Bleche"),
-        QStringLiteral("⚙️ Werk Burbach & 🔩 Neunkirchen\n    Walzdraht-Coils & Edelbaustahl"),
-        QStringLiteral("🚂 2D-Waggons & Torpedopfannen\n    Samms [6A], Rns-z [4A], Torpedo [6A]"),
-        QStringLiteral("⬆️ Quellen (Aufnahme) & ⬇️ Senken\n    Vollautomatischer Be-/Entladezyklus"),
-        QStringLiteral("📡 DB Cargo / SAVVY Telematik\n    Ril-100/DS100, VzG-km & GPS-Snapping")
+    const QVector<QPair<QString, QString>> items = {
+        {QStringLiteral("🔐 DB Cargo link2rail"),        QStringLiteral("CIDP Login, Geofence & Track&Trace")},
+        {QStringLiteral("🔐 Intermodal Telematics"),     QStringLiteral("portal.intermodaltelematics.com")},
+        {QStringLiteral("🔐 DOT Telematik"),             QStringLiteral("portal.dot-telematik.com/login")},
+        {QStringLiteral("🔐 TRANSWAGGON (WOPS)"),        QStringLiteral("portal.transwaggon.de (JSON/XML)")},
+        {QStringLiteral("🔐 Innofreight OS"),            QStringLiteral("os.innofreight.com/login")},
+        {QStringLiteral("🔐 Wascosa Telematik"),         QStringLiteral("SAVVY Synergy / Nexxiot / Wascosa")}
     };
 
-    double fy = infoCard.top() + 42.0;
-    for (const QString &feat : features) {
-        QRectF pill(infoCard.left() + 10.0, fy, infoCard.width() - 20.0, 39.0);
-        p.setBrush(QColor("#3B464E"));
+    double yCur = sideRect.top() + 44.0;
+    for (const auto &it : items) {
+        QRectF card(sideRect.left() + 10, yCur, sideRect.width() - 20, 38.0);
+        p.setBrush(QColor(46, 58, 68, 215));
         p.setPen(QPen(QColor("#56636D"), 1.0));
-        p.drawRoundedRect(pill, 4.0, 4.0);
-        p.setPen(QColor("#F8FAFC"));
-        p.setFont(QFont("Segoe UI", 8, QFont::Bold));
-        p.drawText(pill.adjusted(7.0, 2.0, -5.0, -2.0), Qt::AlignLeft | Qt::AlignVCenter, feat);
-        fy += 43.0;
+        p.drawRoundedRect(card, 5.0, 5.0);
+
+        p.setPen(QColor("#FFFFFF"));
+        p.setFont(QFont("Segoe UI", 8.5, QFont::Bold));
+        p.drawText(card.adjusted(8, 3, -6, -18), Qt::AlignLeft | Qt::AlignVCenter, it.first);
+
+        p.setPen(QColor("#CBD5E1"));
+        p.setFont(QFont("Segoe UI", 7.8));
+        p.drawText(card.adjusted(14, 19, -6, -2), Qt::AlignLeft | Qt::AlignVCenter, it.second);
+        yCur += 42.5;
     }
 
-    // 4. Unterer Ladebalken & Statusbereich
-    QRectF footerRect(16.0, 414.0, W - 32.0, 82.0);
-    p.setBrush(QColor("#232B30"));
-    p.setPen(QPen(QColor("#56636D"), 1.2));
-    p.drawRoundedRect(footerRect, 7.0, 7.0);
+    QRectF footRect(16.0, 416.0, W - 32.0, 78.0);
+    p.setBrush(QColor(15, 23, 42, 230));
+    p.setPen(QPen(QColor("#5C839C"), 1.4));
+    p.drawRoundedRect(footRect, 6.0, 6.0);
 
     p.setPen(QColor("#FBD50E"));
     p.setFont(QFont("Segoe UI", 9, QFont::Bold));
-    p.drawText(QRectF(30.0, 420.0, W - 140.0, 20.0), Qt::AlignLeft | Qt::AlignVCenter, statusText);
+    p.drawText(QRectF(footRect.left() + 14, footRect.top() + 8, footRect.width() - 95, 18),
+               Qt::AlignLeft | Qt::AlignVCenter, statusText);
 
-    const int clampedPct = std::clamp(progressPercent, 0, 100);
-    p.setPen(QColor("#FFFFFF"));
-    p.drawText(QRectF(W - 110.0, 420.0, 80.0, 20.0), Qt::AlignRight | Qt::AlignVCenter,
-               QString("%1 %").arg(clampedPct));
+    p.setPen(QColor("#E2E8F0"));
+    p.drawText(QRectF(footRect.right() - 78, footRect.top() + 8, 64, 18),
+               Qt::AlignRight | Qt::AlignVCenter,
+               QString("%1 %").arg(std::clamp(progressPercent, 0, 100)));
 
-    QRectF barBg(30.0, 444.0, W - 60.0, 16.0);
-    p.setBrush(QColor("#0F172A"));
+    QRectF barBg(footRect.left() + 14, footRect.top() + 31, footRect.width() - 28, 14.0);
+    p.setBrush(QColor("#1E293B"));
     p.setPen(QPen(QColor("#475569"), 1.0));
-    p.drawRoundedRect(barBg, 5.0, 5.0);
+    p.drawRoundedRect(barBg, 4.0, 4.0);
 
-    if (clampedPct > 0) {
-        const double fillW = std::max(12.0, (barBg.width() - 2.0) * (clampedPct / 100.0));
+    const double fillW = (barBg.width() - 2.0) * (std::clamp(progressPercent, 0, 100) / 100.0);
+    if (fillW > 2.0) {
         QRectF barFill(barBg.left() + 1.0, barBg.top() + 1.0, fillW, barBg.height() - 2.0);
         QLinearGradient barGrad(barFill.left(), 0, barFill.right(), 0);
-        barGrad.setColorAt(0.0, QColor("#EF7D00"));
-        barGrad.setColorAt(0.7, QColor("#F59E0B"));
+        barGrad.setColorAt(0.0, QColor("#EA580C"));
+        barGrad.setColorAt(0.6, QColor("#EF7D00"));
         barGrad.setColorAt(1.0, QColor("#FBD50E"));
         p.setBrush(barGrad);
         p.setPen(Qt::NoPen);
-        p.drawRoundedRect(barFill, 4.0, 4.0);
+        p.drawRoundedRect(barFill, 3.0, 3.0);
     }
 
     p.setPen(QColor("#FBD50E"));
-    p.setFont(QFont("Segoe UI", 8, QFont::Bold));
-    p.drawText(QRectF(30.0, 466.0, 560.0, 18.0), Qt::AlignLeft | Qt::AlignVCenter,
-               QStringLiteral("Leitung & Entwicklung: Frank U. Rückert • Kontakt: frank.rueckert@htwsaar.de • htw saar"));
+    p.setFont(QFont("Segoe UI", 7.6, QFont::Bold));
+    p.drawText(QRectF(footRect.left() + 14, footRect.top() + 52, footRect.width() - 235, 18),
+               Qt::AlignLeft | Qt::AlignVCenter,
+               QStringLiteral("Leitung: Frank U. Rückert (frank.rueckert@htwsaar.de) • Entwicklung: Sevda Dawd (sevdasdawd@gmail.com)"));
 
     p.setPen(QColor("#94A3B8"));
-    p.setFont(QFont("Segoe UI", 7.5));
-    p.drawText(QRectF(W - 270.0, 466.0, 240.0, 18.0), Qt::AlignRight | Qt::AlignVCenter,
-               QStringLiteral("SHS Logistics GmbH • www.shs-logistics.de"));
+    p.setFont(QFont("Segoe UI", 7.6));
+    p.drawText(QRectF(footRect.right() - 220, footRect.top() + 52, 206, 18),
+               Qt::AlignRight | Qt::AlignVCenter,
+               QStringLiteral("SHS Logistics GmbH • htw saar"));
 
     return pm;
 }
@@ -1642,41 +1426,32 @@ QPixmap MainWindowSHSLogistics::createCorporateSplashPixmap(int progressPercent,
 void MainWindowSHSLogistics::openPdfManualFile(const QString &pdfFileName, const QString &fallbackTitle)
 {
     const QString appDir = QCoreApplication::applicationDirPath();
-    const QStringList searchDirs = {
-        appDir,
-        appDir + QStringLiteral("/Manuals"),
-        QDir(appDir).filePath(QStringLiteral("..")),
-        QDir(appDir).filePath(QStringLiteral("../..")),
-        QDir(appDir).filePath(QStringLiteral("../../..")),
-        QDir(appDir).filePath(QStringLiteral("../../../Release_Standalone"))
+    const QStringList candidates = {
+        appDir + QLatin1Char('/') + pdfFileName,
+        QDir::cleanPath(appDir + QStringLiteral("/../../..") + QLatin1Char('/') + pdfFileName),
+        QDir::currentPath() + QLatin1Char('/') + pdfFileName
     };
 
-    for (const QString &dirPath : searchDirs) {
-        const QString candidate = QDir(dirPath).absoluteFilePath(pdfFileName);
-        if (QFileInfo::exists(candidate)) {
-            statusBar()->showMessage(QStringLiteral("Öffne PDF-Manual: %1").arg(candidate), 6000);
-            QDesktopServices::openUrl(QUrl::fromLocalFile(candidate));
+    for (const QString &path : candidates) {
+        if (QFileInfo::exists(path)) {
+            statusBar()->showMessage(QStringLiteral("Öffne PDF-Manual: %1").arg(path), 6000);
+            QDesktopServices::openUrl(QUrl::fromLocalFile(path));
             return;
         }
     }
 
-    // Fallback: Falls das PDF im aktuellen Ordner noch nicht existiert, direkt mit QPrinter erzeugen!
-    const QString generatedPdf = QDir(appDir).absoluteFilePath(pdfFileName);
+    const QString generatedPdf = appDir + QLatin1Char('/') + pdfFileName;
     QPrinter pdfPrinter(QPrinter::HighResolution);
     pdfPrinter.setOutputFormat(QPrinter::PdfFormat);
     pdfPrinter.setOutputFileName(generatedPdf);
 
     QTextDocument doc;
     doc.setHtml(QStringLiteral(
-        "<h1>%1</h1>"
-        "<p><b>SHS Logistics GmbH – Partner [schafft Zukunft] Stahl</b></p>"
-        "<p>Werksbahn-, Waggon-, Güter-, Quellen/Senken- &amp; Bahn-API-Leitsystem (Qt 6.9 / C++17).</p>"
-        "<ul>"
-        "<li><b>Standorte (F1–F5):</b> Werk Völklingen, Dillinger Hütte &amp; ROGESA, Werk Burbach, Werk Neunkirchen, Gesamtübersicht.</li>"
-        "<li><b>Waggons:</b> Samms [6A] (Orange), Rns-z [4A] (Stahlblau), 4-Achser Shimmns (Grün), Torpedowagen [6A] (Rot, 1420 °C Flüssigroheisen).</li>"
-        "<li><b>Quellen &amp; Senken:</b> Aktive Güter-Aufnahme (⬆️ Beladen) und Güter-Abladung (⬇️ Entladen) inkl. Lokomotiv-Pool.</li>"
-        "<li><b>Bahn-API (F9) &amp; Zufalls-Test (F8):</b> Ril-100/DS100-Betriebsstellen, VzG-Streckenkilometer &amp; GPS-Track-Snapping.</li>"
-        "</ul>").arg(fallbackTitle));
+        "<h1 style='color:#3B464E;'>%1</h1>"
+        "<h3 style='color:#EF7D00;'>SHS Logistics GmbH – Multi-Telematik Live-GPS-Leitsystem (Version %2)</h3>"
+        "<p><b>Leitung &amp; Entwicklung:</b> Frank U. Rückert (frank.rueckert@htwsaar.de) &amp; Sevda Dawd (sevdasdawd@gmail.com), htw saar</p>"
+        "<p><b>6 integrierte Telematik-Dienste:</b> DB Cargo link2rail, Intermodal Telematics (IMT), DOT Telematik, TRANSWAGGON (WOPS), Innofreight OS, Wascosa.</p>")
+            .arg(fallbackTitle, QStringLiteral(SHS_APP_VERSION)));
     doc.print(&pdfPrinter);
 
     statusBar()->showMessage(QStringLiteral("Öffne PDF-Manual: %1").arg(generatedPdf), 6000);
@@ -1706,12 +1481,12 @@ void MainWindowSHSLogistics::onOpenManualsFolder()
 void MainWindowSHSLogistics::onShowSplashPreviewDialog()
 {
     QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("SHS Logistics GmbH – Start-Splashscreen (Corporate Design)"));
+    dlg.setWindowTitle(QStringLiteral("SHS Logistics GmbH – Start-Splashscreen (Version %1)").arg(QStringLiteral(SHS_APP_VERSION)));
     auto *lay = new QVBoxLayout(&dlg);
     lay->setContentsMargins(0, 0, 0, 0);
     auto *lbl = new QLabel(&dlg);
     lbl->setPixmap(createCorporateSplashPixmap(
-        100, QStringLiteral("SHS Logistics Leitsystem aktiv — Alle Werke, Züge, Quellen & Senken geladen.")));
+        100, QStringLiteral("Multi-Telematik Live-GPS-Leitsystem aktiv (6 Portale).")));
     lay->addWidget(lbl);
     dlg.setFixedSize(860, 510);
     dlg.exec();
@@ -1720,26 +1495,23 @@ void MainWindowSHSLogistics::onShowSplashPreviewDialog()
 void MainWindowSHSLogistics::scheduleAutoScreenshots(const QString &outDir)
 {
     createCorporateSplashPixmap(
-        100, QStringLiteral("Verbinde DB Cargo / SAVVY Telematik-Schnittstelle – Startbereit!"))
+        100, QStringLiteral("Alle 6 Telematik-Dienste bereit – bitte in den Login-Reitern anmelden!"))
         .save(outDir + QStringLiteral("/preview_splash.png"));
 
-    QTimer::singleShot(2500, this, [this, outDir]() {
+    QTimer::singleShot(2000, this, [this, outDir]() {
         this->grab().save(outDir + QStringLiteral("/preview_voelklingen.png"));
-        m_sideTabs->setCurrentIndex(1); // Tab 2: Güter, Quellen & Senken
-        QTimer::singleShot(800, this, [this, outDir]() {
-            this->grab().save(outDir + QStringLiteral("/preview_goods_tab.png"));
-            m_mapWidget->focusSite(QStringLiteral("Gesamt"), false);
-            QTimer::singleShot(1000, this, [this, outDir]() {
-                this->grab().save(outDir + QStringLiteral("/preview_corridor.png"));
-                m_mapWidget->focusSite(QStringLiteral("Dillingen"), false);
-                QTimer::singleShot(1000, this, [this, outDir]() {
-                    this->grab().save(outDir + QStringLiteral("/preview_dillingen.png"));
-                    m_sideTabs->setCurrentIndex(3); // Tab 4: Bahn-API & Test
-                    onQueryDbApiClicked();
-                    QTimer::singleShot(700, this, [this, outDir]() {
-                        this->grab().save(outDir + QStringLiteral("/preview_api_tab.png"));
-                        this->close();
-                    });
+        m_sideTabs->setCurrentIndex(1); // Tab 2: 6 Login-Reiter
+        if (m_providerLoginTabs) m_providerLoginTabs->setCurrentIndex(0);
+        QTimer::singleShot(700, this, [this, outDir]() {
+            this->grab().save(outDir + QStringLiteral("/preview_api_tab.png"));
+            m_sideTabs->setCurrentIndex(2); // Tab 3: Werke & Geofences
+            m_mapWidget->focusSite(QStringLiteral("Dillingen"), false);
+            QTimer::singleShot(900, this, [this, outDir]() {
+                this->grab().save(outDir + QStringLiteral("/preview_dillingen.png"));
+                m_mapWidget->focusSite(QStringLiteral("Gesamt"), false);
+                QTimer::singleShot(900, this, [this, outDir]() {
+                    this->grab().save(outDir + QStringLiteral("/preview_corridor.png"));
+                    this->close();
                 });
             });
         });

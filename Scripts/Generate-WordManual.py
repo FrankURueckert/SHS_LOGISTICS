@@ -23,7 +23,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 # Zentrale Versionsnummer (identisch zu GUI/CMakeLists.txt und Installer/SHS_Logistics.nsi)
-APP_VERSION = "0.8"
+APP_VERSION = "0.9"
 
 
 def set_cell_background(cell, hex_color: str):
@@ -193,7 +193,10 @@ def build_quickstart_manual(repo_root: str):
 
     p_meta = doc.add_paragraph()
     p_meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r_auth = p_meta.add_run("Wissenschaftliche Leitung & Software-Entwicklung: Frank U. Rückert | Kontakt: frank.rueckert@htwsaar.de | htw saar\n")
+    r_auth = p_meta.add_run(
+        "Wissenschaftliche Leitung & Entwicklung: Frank U. Rückert (frank.rueckert@htwsaar.de)\n"
+        "Entwicklerin: Sevda Dawd (sevdasdawd@gmail.com)  |  htw saar\n"
+    )
     r_auth.font.bold = True
     r_auth.font.size = Pt(9.5)
     r_auth.font.color.rgb = RGBColor(0x02, 0x84, 0xC7)
@@ -203,12 +206,13 @@ def build_quickstart_manual(repo_root: str):
         p_h.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p_h.add_run().add_picture(hero_jpg, width=Inches(5.8))
 
-    add_styled_heading(doc, "1. Programmstart", level=1)
+    add_styled_heading(doc, "1. Programmstart & Anmeldung bei den 6 Telematik-Diensten", level=1)
     doc.add_paragraph(
-        "Starten Sie die Anwendung über die Desktop-Verknüpfung bzw. den Startmenü-Eintrag 'SHS Logistics' "
-        "(nach der Installation mit 'setup_SHS_Logistics.exe') oder direkt über 'SHS_Logistics.exe' im "
-        "Release-Ordner. Nach wenigen Sekunden öffnet sich der interaktive 2D-Leitstand mit dem Werk Völklingen "
-        "im Mittelpunkt."
+        "Starten Sie die Anwendung über die Desktop-Verknüpfung bzw. den Startmenü-Eintrag 'SHS Logistics Leitsystem' "
+        "(nach der Installation mit 'setup_SHS_Logistics.exe') oder direkt über 'SHS_Logistics.exe'. "
+        "Die Software startet im reinen Multi-Telematik Live-GPS-Betrieb und vereint 6 Portale auf einer gemeinsamen Karte: "
+        "DB Cargo link2rail, Intermodal Telematics (IMT), DOT Telematik, TRANSWAGGON (WOPS), Innofreight OS und Wascosa. "
+        "Klicken Sie oben rechts auf '🔐 Dienste & Logins (0/6)', um sich in den 6 eigenen Login-Reitern anzumelden."
     )
 
     add_styled_heading(doc, "2. Die wichtigsten Bedienelemente & Tastenkürzel auf einen Blick", level=1)
@@ -225,12 +229,12 @@ def build_quickstart_manual(repo_root: str):
             r.font.size = Pt(9.0)
 
     rows = [
-        ("F1 / F2 / F3 / F4 / F5", "Obere Standort-Leiste", "Zoom auf Werk Völklingen (F1), Dillinger Hütte (F2), Burbach (F3), Neunkirchen (F4), Alle (F5)"),
-        ("Leertaste (Space)", "Button 'Simulation Pause/Start'", "Pausiert oder startet die 2D-Zugsimulation und Be-/Entladung"),
-        ("Mausrad / Linksklick", "2D-Kartenfenster (Mitte)", "Stufenlos zoomen, Karte verschieben, Waggon oder Quelle/Senke auswählen"),
-        ("Tab 1: Züge & Waggons", "Buttons '+ Samms', '+ Rns-z', '🔥 + Torpedo'", "Züge dynamisch verlängern/verkürzen & 1420 °C Torpedowagen anhängen"),
-        ("Tab 2: Güter & Quellen", "Buttons '⬆️ An Quelle aufnehmen' / '⬇️ Abladen'", "Stahlchargen anlegen, an Quellen beladen, an Senken abladen & Lok-Pool steuern"),
-        ("F8 / F9 (Tab 4)", "Buttons '🎲 Zufalls-Pos.' / '📡 DB-API Ortung'", "Zufällige Testpositionierung (F8) oder DB-API / SAVVY Telematik-Abruf (F9)"),
+        ("Strg+L", "Button '🔐 Bei link2rail anmelden'", "Öffnet den link2rail Anmelde- & Endpunkt-Dialog (Portal/CIDP, OAuth2, API-Key)"),
+        ("F9", "Button '🔄 Live-Daten abrufen'", "Ruft sofort alle aktuellen GPS- & Waggondaten über die link2rail API ab"),
+        ("F1 – F6", "Obere Standort-Leiste", "Zoom auf Völklingen (F1), Dillingen (F2), Burbach (F3), Neunkirchen (F4), Saarland (F5), Deutschland (F6)"),
+        ("F7", "Button '🎯 ALLE LIVE-WAGGONS'", "Passt die Kamera automatisch auf alle per link2rail empfangenen GPS-Positionen an"),
+        ("Tab 1: Live-Waggons", "Suche, Bauart-Filter & Detail-Inspektor", "Filtert empfangene EVN/Waggons und zeigt alle übernommenen link2rail JSON-Felder an"),
+        ("Tab 2: link2rail Login", "Schnellanmeldung, Auto-Sync & Import/Export", "Direktes Ein-/Ausloggen, zyklischer Abruf, JSON/CSV Import & Export sowie HTTP-Protokoll"),
         ("F10 / F11 (Menü Hilfe)", "Menü 'Hilfe' -> PDF-Manuals öffnen", "Öffnet direkt das Technische Handbuch (F10) oder diese Kurzanleitung (F11) als PDF")
     ]
     for row in rows:
@@ -314,12 +318,15 @@ def build_manual():
 
     p_meta = doc.add_paragraph()
     p_meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r_auth = p_meta.add_run("Wissenschaftliche Leitung & Software-Entwicklung: Frank U. Rückert\n")
+    r_auth = p_meta.add_run(
+        "Wissenschaftliche Leitung & Entwicklung: Frank U. Rückert (frank.rueckert@htwsaar.de)\n"
+        "Entwicklerin: Sevda Dawd (sevdasdawd@gmail.com)\n"
+    )
     r_auth.font.bold = True
     r_auth.font.size = Pt(10.5)
     r_auth.font.color.rgb = RGBColor(0x02, 0x84, 0xC7)
 
-    r_contact = p_meta.add_run("Kontakt: frank.rueckert@htwsaar.de  |  htw saar – Hochschule für Technik und Wirtschaft des Saarlandes\n"
+    r_contact = p_meta.add_run("htw saar – Hochschule für Technik und Wirtschaft des Saarlandes\n"
                                f"Kooperationspartner: SHS Logistics GmbH (Stahl-Holding-Saar)  |  Software-Version: {APP_VERSION}  |  Stand: {datetime.now().strftime('%d.%m.%Y')}")
     r_contact.font.size = Pt(9.5)
     r_contact.font.color.rgb = RGBColor(0x64, 0x74, 0x8B)
@@ -329,12 +336,12 @@ def build_manual():
     # =========================================================================
     add_styled_heading(doc, "1. Überblick & Autorschaft", level=1)
     doc.add_paragraph(
-        "Das Software-System SHS_LOGISTICS (Version " + APP_VERSION + ") wurde unter der wissenschaftlichen Leitung und Entwicklung von "
-        "Frank U. Rückert (htw saar – Hochschule für Technik und Wirtschaft des Saarlandes, frank.rueckert@htwsaar.de) "
-        "für die SHS Logistics GmbH (100%ige Tochtergesellschaft der SHS – Stahl-Holding-Saar) realisiert. "
-        "Das Tool bildet die saarländische Werksbahn- und Schwergutlogistik zwischen der Dillinger Hütte, "
-        "den ROGESA Hochöfen und den drei Saarstahl-Standorten Völklingen, Burbach und Neunkirchen digital in "
-        "einem interaktiven 2D-Leitsystem ab."
+        "Das Software-System SHS_LOGISTICS (Version " + APP_VERSION + ") wurde unter der wissenschaftlichen Leitung von "
+        "Frank U. Rückert (frank.rueckert@htwsaar.de) gemeinsam mit Entwicklerin Sevda Dawd (sevdasdawd@gmail.com) "
+        "an der htw saar – Hochschule für Technik und Wirtschaft des Saarlandes für die SHS Logistics GmbH "
+        "(100%ige Tochtergesellschaft der SHS – Stahl-Holding-Saar) realisiert. "
+        "Das Tool vereint 6 europäische Bahntelematik-Portale (DB Cargo link2rail, Intermodal Telematics, DOT Telematik, "
+        "TRANSWAGGON, Innofreight OS und Wascosa) auf einer gemeinsamen interaktiven 2D-GPS-Karte."
     )
 
     # =========================================================================
@@ -487,67 +494,67 @@ def build_manual():
     # =========================================================================
     # 5. SCHRITT-FÜR-SCHRITT-BEDIENUNGSANLEITUNG FÜR DAS GUI
     # =========================================================================
-    add_styled_heading(doc, "5. Schritt-für-Schritt-Bedienungsanleitung für das GUI", level=1)
+    add_styled_heading(doc, "5. Schritt-für-Schritt-Bedienungsanleitung (link2rail Live-Betrieb)", level=1)
 
     add_styled_heading(doc, "5.1 Hauptbildschirm, Schnellwahlleiste & Tastenkürzel", level=2)
     doc.add_paragraph(
-        "Das GUI gliedert sich in eine obere Schnellwahlleiste, den linken Steuerbereich mit vier Tabs und die zentrale "
-        "2D-Karte. Die wichtigsten Tastenkürzel lauten:\n"
+        "Das GUI arbeitet im reinen DB Cargo link2rail Live-GPS-Betrieb (ohne simulierte Demo-Züge) und gliedert sich in "
+        "die obere Schnellwahlleiste, den linken Steuerbereich mit vier Tabs und die zentrale 2D-GPS-Karte (Saarland, "
+        "Deutschland und Europa). Die wichtigsten Tastenkürzel lauten:\n"
+        "• Strg+L: Anmelde- & Endpunkt-Dialog für DB Cargo link2rail öffnen\n"
+        "• F9: Alle link2rail GPS- & Waggondaten sofort abrufen\n"
         "• F1: Zoom auf Saarstahl Werk Völklingen (LD-Stahlwerk, Strangguss, Walzwerk, Saarschmiede)\n"
         "• F2: Zoom auf Dillinger Hütte & ROGESA (Hochöfen 4 & 5, Grobblechwalzwerk, Hafen Dillingen)\n"
         "• F3: Zoom auf Saarstahl Werk Burbach (Drahtwerk)\n"
         "• F4: Zoom auf Saarstahl Werk Neunkirchen (Walzwerk & Edelbaustahl)\n"
-        "• F5: Gesamtübersicht des Saarland-Bahnkorridors (Dillingen <-> Völklingen <-> Burbach <-> Neunkirchen)\n"
-        "• Leertaste: Start / Pause der gesamten 2D-Simulation und Be-/Entladevorgänge\n"
-        "• F8: Zufalls-Testpositionierung aller Züge auf den Gleisen\n"
-        "• F9: Sofortiger Abruf der Waggon-Positionen über die Bahn-API (DB Telematik / SAVVY)\n"
+        "• F5: Gesamtübersicht des Saarland-Bahnkorridors\n"
+        "• F6: Deutschland-Übersicht (für Waggons im bundesweiten DB-Cargo-Netz)\n"
+        "• F7: Kamera automatisch auf alle empfangenen link2rail Live-Waggons einpassen\n"
         "• F10: Öffnet direkt dieses Technische Handbuch als PDF\n"
         "• F11: Öffnet die Kurzanleitung & Schnellstart als PDF\n"
         "• Strg+P: Druckdialog für hochauflösenden Ausdruck oder PDF-Export der aktuellen Kartenansicht\n"
         "• Strg+Q: Anwendung beenden"
     )
 
-    add_styled_heading(doc, "5.2 Tab 1 bedienen: '🚂 Züge & Waggons'", level=2)
+    add_styled_heading(doc, "5.2 Tab 1 bedienen: '📡 Live-Waggons'", level=2)
     doc.add_paragraph(
-        "1. Verband auswählen: Wählen Sie im Dropdown 'Verband wählen' einen Zug (z. B. SHS-VK-101, TORPEDO-DL-201 oder "
-        "eine abgestellte Waggongruppe LAGER-VK-P01). Ein Doppelklick auf eine Waggonzeile oder Klick auf '🔍 Auf Waggon zoomen' zentriert die Karte direkt auf das Fahrzeug.\n"
-        "2. Zug verlängern / verkürzen: Klicken Sie auf '➕ Samms [6-Achser] anhängen', '➕ Rns-z [4-Achser] anhängen', '➕ 4-Achser (Draht-Coils) anhängen' oder "
-        "'🔥 + Torpedowagen (Flüssigeisen)', um sofort einen neuen Waggon hinten anzuhängen. Über '➖ Letzten Waggon abhängen' "
-        "wird der letzte Wagen abgekuppelt. Mit dem Drehfeld 'Zuglänge (Waggons)' lässt sich jede Zuglänge zwischen 1 und 30 "
-        "Wagen direkt einstellen.\n"
-        "3. Waggonposition gezielt umbauen: Klicken Sie in der Waggontabelle oder direkt auf der Karte einen Waggon an. "
-        "Wählen Sie darunter die gewünschte Bauart und das Produkt und klicken Sie auf 'Waggon & Gut setzen'.\n"
-        "4. Lokomotive an- oder abkuppeln: Mit '🚂 Freie Lok ankuppeln (Start)' wird eine Lokomotive aus dem Pool an eine "
-        "gelagerte Gruppe gekuppelt. Mit '🅿️ Lok abkuppeln (Waggons lagern)' wird der Zug als gelagerte Waggongruppe auf dem Gleis geparkt."
+        "1. Live-Tabelle & Filter: Alle über link2rail empfangenen Waggons werden mit UIC/EVN-Nummer, Zug-/Sendungsnummer, "
+        "automatisch erkannter Bauart (Samms, Rns-z, Shimmns/Eaos, Torpedo), Status/Event, Ort/Geofence, GPS-Koordinaten "
+        "und Zeitstempel aufgelistet. Über das Suchfeld und den Bauart-Filter lässt sich der Bestand sofort eingrenzen.\n"
+        "2. Direktes GPS-Zoomen: Ein Klick wählt den Waggon auf der Karte aus; ein Doppelklick (oder Klick auf '🔍 Auf Waggon zoomen') "
+        "zentriert die Karte direkt auf die GPS-Koordinate des Waggons.\n"
+        "3. Vollständiger API-Detail-Inspektor: Die untere Tabelle zeigt sämtliche aus der link2rail JSON-Antwort übernommenen "
+        "Felder (inkl. aller Rohattribute raw.*) an. Über '📋 Waggon-Daten kopieren' wird das JSON direkt in die Zwischenablage kopiert."
     )
 
-    add_styled_heading(doc, "5.3 Tab 2 bedienen: '📦 Güter, Quellen & Senken'", level=2)
+    add_styled_heading(doc, "5.3 Tab 2 bedienen: '🔐 Dienste & Logins (6)' — Eigener Login-Reiter je Dienst", level=2)
     doc.add_paragraph(
-        "1. Lokomotiv-Pool verwalten: Das Drehfeld 'Verfügbare Lokomotiven im Pool' legt fest, wie viele Maschinen "
-        "im Einsatz sein können. Bei einer Reduzierung werden überzählige Verbände automatisch auf Abstellgleisen gelagert.\n"
-        "2. Neues Güter-Objekt erzeugen: Wählen Sie das Stahlprodukt (z. B. Flüssigroheisen 1420 °C, Dillinger Grobbleche, "
-        "Stahlbrammen, Knüppel, Coils), die Tonnage (40 bis 1800 t), Quelle, Senke und Waggonklasse. Ein Klick auf "
-        "'📦 Güter-Objekt erzeugen & an Quelle auf Waggons aufnehmen' berechnet automatisch die benötigten Waggons und weist den Transport zu.\n"
-        "3. Manuelle Beladung / Abladung: Mit '⬆️ An Quelle aufnehmen (Beladen)' springt der ausgewählte Zug zu seiner "
-        "Quelle und belädt alle Waggons. Mit '⬇️ An Senke abladen (Entladen)' wird die Fracht an der Senke gelöscht und der "
-        "Senken-Lagerbestand erhöht."
+        "Für jeden der 6 integrierten Telematik-Dienste steht ein eigener, unabhängiger Login-Reiter mit Statusanzeige (🔴/🟢), "
+        "Web-Portal-Direktlink, eigenem Auto-Sync-Intervall, JSON/XML/CSV-Dateiimport und eigenem API-Protokoll zur Verfügung:\n"
+        "1. DB link2rail (https://link2rail.dbcargo.com/ — CIDP Login API V3, Geofence Control, Track & Trace, TrainManagement)\n"
+        "2. Intermodal (IMT) (https://portal.intermodaltelematics.com/ — GPS- & Sensor-Telematik)\n"
+        "3. DOT Telematik (https://portal.dot-telematik.com/login — DOT-Link & DOT Unified REST API)\n"
+        "4. TRANSWAGGON (https://portal.transwaggon.de/csp/wops/index.html?err=1&langID=DE — WOPS JSON/XML/CSV & Freight Buddy)\n"
+        "5. Innofreight OS (https://os.innofreight.com/login — InnoWaggon / InnoTainer GPS-Tracking)\n"
+        "6. Wascosa (https://www.wascosa.com/ — inkl. Vorlagen für SAVVY® Synergy & Nexxiot Connect Cloud)\n"
+        "Alle empfangenen GPS-Positionen sämtlicher angemeldeten Dienste werden automatisch zusammengeführt (bei gleicher EVN "
+        "intelligent angereichert) und gemeinsam auf der SHS-2D-Karte dargestellt. Über den Farbmodus 'Nach Telematik-Dienst färben' "
+        "sowie die 6 Sichtbarkeits-Checkboxen im Tab '🗺️ Karte & Layer' behalten Sie jederzeit den vollen Überblick."
     )
 
-    add_styled_heading(doc, "5.4 Tab 3 bedienen: '🗺️ Karte & Standorte'", level=2)
+    add_styled_heading(doc, "5.4 Tab 3 bedienen: '🏭 Werke & Geofences'", level=2)
     doc.add_paragraph(
-        "Hier wählen Sie zwischen Hybrid-Karten (Google Maps + vereinfachtes Werk), reiner Schematik/CAD-Ansicht, "
-        "Straßenkarte oder Satellitenbildern. Über Checkboxen lassen sich Werkhallen, Straßen, Flüsse, Gleisbezeichnungen, "
-        "Waggon-Etiketten und die Größenverstärkung individuell schalten. Der Schieberegler 'Tempo' regelt die "
-        "Geschwindigkeit stufenlos von 0.2x (Zeitlupe) bis 10.0x."
+        "Listet alle 10 realen Standorte von Saarstahl AG und Dillinger Hütte / ROGESA auf und zählt automatisch, wie viele "
+        "echte link2rail Live-Waggons sich anhand ihrer GPS-Koordinaten im jeweiligen Werk/Geofence befinden. Ein Klick auf eine "
+        "Zeile zentriert die Karte direkt auf diese Anlage."
     )
 
-    add_styled_heading(doc, "5.5 Tab 4 bedienen: '📡 Bahn-API & Test'", level=2)
+    add_styled_heading(doc, "5.5 Tab 4 bedienen: '🗺️ Karte & Layer'", level=2)
     doc.add_paragraph(
-        "1. Test-Zufallsverteilung: Über '🎲 Zufällige Positionen auf allen Gleisen' werden Züge sofort zufällig im Netz verteilt.\n"
-        "2. Bahn-API Telematik-Schnittstelle: Zeigt den REST-Endpunkt, Client-ID und API-Key. Bei Klick auf "
-        "'📡 Waggon-Positionen über Bahn-API abrufen' (oder bei aktivierter 5-Sekunden-Autosynchronisation) wird das "
-        "vollständige JSON-Telegramm mit DS100-Betriebsstellen (SVK, SDL, SBU, SNK), VzG-Streckenkilometern, Luhn-10-UIC-Nummern, "
-        "Roh-GNSS-Koordinaten und gesnappten Gleiskoordinaten ausgegeben."
+        "Hier wechseln Sie zwischen Hybrid-Karte (Google Maps + vereinfachtes Werk), Schematik/CAD, Straßenkarte und Satellitenbild. "
+        "Alle Layer (Werkhallen, Geofences, Straßen/Flüsse, Gleisnamen, Waggon-Labels) sowie das intelligente GPS-Gleis-Snapping "
+        "(Waggons innerhalb von 120 m zu Werksgleisen werden exakt auf die Gleisachse ausgerichtet; Waggons außerhalb des Saarlands "
+        "erscheinen frei an ihrer exakten GPS-Koordinate in Deutschland/Europa) lassen sich individuell ein- und ausschalten."
     )
 
     if os.path.exists(img_api):
@@ -555,7 +562,7 @@ def build_manual():
         p_img_api.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p_img_api.add_run().add_picture(img_api, width=Inches(6.5))
         p_cap_api = doc.add_paragraph(
-            "Abbildung 2: Tab '📡 Bahn-API & Test' mit Ril-100/DS100-Betriebsstellen, VzG-Streckenkilometern und JSON-Protokoll."
+            "Abbildung 2: Tab '🔐 link2rail Login & API' mit Schnellanmeldung, konfigurierbaren Endpunkten und Live-Protokoll."
         )
         p_cap_api.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p_cap_api.runs[0].font.size = Pt(9)
@@ -614,8 +621,9 @@ def build_manual():
     doc.add_paragraph(
         "Für wissenschaftliche, fachliche und softwaretechnische Rückfragen zum System SHS_LOGISTICS:\n\n"
         "Wissenschaftliche Leitung & Software-Entwicklung:\n"
-        "Frank U. Rückert\n"
-        "E-Mail: frank.rueckert@htwsaar.de\n"
+        "Frank U. Rückert — E-Mail: frank.rueckert@htwsaar.de\n"
+        "Entwicklerin:\n"
+        "Sevda Dawd — E-Mail: sevdasdawd@gmail.com\n"
         "htw saar – Hochschule für Technik und Wirtschaft des Saarlandes\n"
         "Fakultät für Ingenieurwissenschaften\n"
         "Goebenstraße 40, 66117 Saarbrücken\n\n"

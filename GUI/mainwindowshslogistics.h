@@ -3,19 +3,18 @@
 
 #include <QMainWindow>
 #include <QComboBox>
-#include <QSpinBox>
-#include <QDoubleSpinBox>
 #include <QTableWidget>
 #include <QPushButton>
 #include <QCheckBox>
 #include <QLineEdit>
-#include <QPlainTextEdit>
 #include <QLabel>
-#include <QSlider>
 #include <QTabWidget>
-#include <QTimer>
+#include <QFrame>
+#include <QVector>
 
 #include "railmapwidget.h"
+#include "link2railclient.h"
+#include "providerloginwidget.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindowSHSLogistics; }
@@ -31,50 +30,33 @@ public:
 
     void scheduleAutoScreenshots(const QString &outDir);
     static QPixmap createCorporateSplashPixmap(int progressPercent = 100,
-                                               const QString &statusText = QStringLiteral("Starte SHS Logistics Leitsystem ..."));
+                                               const QString &statusText = QStringLiteral("Starte SHS Logistics Multi-Telematik Leitsystem ..."));
 
 private slots:
-    void onTrainComboChanged(int index);
-    void onWagonTableClicked(int row, int column);
-    void onWagonTableDoubleClicked(int row, int column);
+    // Multi-Provider Steuerung
+    void onOpenProviderTab(int providerIndex);
+    void onFetchAllAuthenticatedClicked();
+    void onLogoutAllClicked();
+    void onExportAllJsonClicked();
+    void onExportAllCsvClicked();
+    void onQuickImportActiveProviderClicked();
+
+    // Aggregations-Slots von allen 6 Telematik-Clients
+    void onAnyProviderAuthChanged();
+    void onAnyProviderDataUpdated();
+
+    // Tabellen, Filter & Karte
+    void onLiveFilterChanged();
+    void onLiveWagonTableClicked(int row, int column);
+    void onLiveWagonTableDoubleClicked(int row, int column);
     void onMapSelectionChanged(int trainIdx, int wagonIdx);
     void onTrainsUpdated();
-    void onCargoAndNodesUpdated();
-    void onSimStepped();
-
-    // Zuglänge & Waggons
-    void onAddSammsClicked();
-    void onAddRnszClicked();
-    void onAdd4AxleClicked();
-    void onAdd6AxleClicked();
-    void onRemoveWagonClicked();
-    void onWagonCountSpinChanged(int count);
-    void onChangeSelectedWagonCategory();
-
-    // Lokomotiv-Pool & Abstellen/Lagern
-    void onLocoPoolSpinChanged(int totalLocos);
-    void onCoupleLocoClicked();
-    void onUncoupleLocoClicked();
-
-    // Güter-Objekte & Quellen/Senken
-    void onNewOrderProductChanged(int index);
-    void onCreateCargoOrderClicked();
+    void onNodesUpdated();
     void onNodeTableClicked(int row, int column);
-    void onCargoOrderTableClicked(int row, int column);
-
-    // Simulation & Karte
-    void onToggleSimClicked();
-    void onReverseTrainClicked();
-    void onTrackAssignChanged(int index);
-    void onSpeedSliderChanged(int val);
     void onColorModeChanged(int index);
     void onMapModeChanged(int index);
 
-    // Bahn-API & Test-Positionierung & Handbücher (PDF)
-    void onRandomizeAllClicked();
-    void onRandomizeVoelklingenClicked();
-    void onQueryDbApiClicked();
-    void onAutoPollToggled(bool checked);
+    // Datei & Hilfe
     void onPrintMap();
     void onOpenMainManualPdf();
     void onOpenQuickStartPdf();
@@ -83,65 +65,61 @@ private slots:
     void onShowAboutDialog();
 
 private:
+    struct FlatWagonRef {
+        int trainIdx = -1;
+        int wagonIdx = -1;
+    };
+
     void setupCorporateTheme();
     void setupMenuBar();
     void buildMainLayout();
-    void refreshTrainSelectorAndControls();
-    void refreshWagonTable();
-    void refreshSourcesSinksAndCargoTables();
-    void updateLiveTelemetryLabels();
+    void rebuildUnifiedLiveData();
+    QVector<Link2RailWagonRecord> collectUnifiedRecords() const;
+    void refreshLiveWagonTable();
+    void refreshSelectedWagonInspector();
+    void refreshNodesTable();
+    void updateHeaderAndConnectionUi();
     void openPdfManualFile(const QString &pdfFileName, const QString &fallbackTitle);
 
     Ui::MainWindowSHSLogistics *ui = nullptr;
     RailMapWidget *m_mapWidget = nullptr;
     QTabWidget *m_sideTabs = nullptr;
 
-    // Top-Toolbar Buttons
-    QPushButton *m_btnPlayPause = nullptr;
+    // Alle 6 unabhängigen Telematik-Clients & ihre eigenen Login-Reiter
+    QVector<Link2RailClient*> m_clients;
+    QVector<ProviderLoginWidget*> m_loginWidgets;
+    QTabWidget *m_providerLoginTabs = nullptr;
+
+    // Header & Toolbar
     QLabel *m_lblHeaderStats = nullptr;
+    QPushButton *m_btnToolbarLogins = nullptr;
+    QPushButton *m_btnToolbarSyncAll = nullptr;
 
-    // Tab 1: Züge & Waggons
-    QComboBox *m_comboTrain = nullptr;
-    QComboBox *m_comboTrackAssign = nullptr;
-    QSpinBox *m_spinWagonCount = nullptr;
+    // Tab 1: Alle Live-Waggons (vereinigte Ansicht aller 6 Dienste)
+    QFrame *m_bannerNotLoggedIn = nullptr;
+    QComboBox *m_comboProviderFilter = nullptr;
+    QLineEdit *m_editSearchFilter = nullptr;
+    QComboBox *m_comboCategoryFilter = nullptr;
     QComboBox *m_comboColorMode = nullptr;
-    QComboBox *m_comboEditWagonType = nullptr;
-    QComboBox *m_comboEditWagonProduct = nullptr;
-    QTableWidget *m_tableWagons = nullptr;
-    QLabel *m_lblTrainSummary = nullptr;
+    QLabel *m_lblLiveSummary = nullptr;
+    QTableWidget *m_tableLiveWagons = nullptr;
+    QTableWidget *m_tableWagonDetails = nullptr;
+    QVector<FlatWagonRef> m_filteredRows;
 
-    // Tab 2: Güter-Objekte, Quellen/Senken & Lokomotiv-Pool
-    QSpinBox *m_spinLocoPool = nullptr;
-    QLabel *m_lblLocoStatus = nullptr;
-    QComboBox *m_comboNewProduct = nullptr;
-    QSpinBox *m_spinNewTons = nullptr;
-    QComboBox *m_comboNewSource = nullptr;
-    QComboBox *m_comboNewSink = nullptr;
-    QComboBox *m_comboNewWagonCat = nullptr;
+    // Tab 3: Standorte & Geofences
     QTableWidget *m_tableNodes = nullptr;
-    QTableWidget *m_tableCargoOrders = nullptr;
 
-    // Tab 3: Karte & Standorte
+    // Tab 4: Karte & Layer (inkl. Sichtbarkeit je Dienst)
     QComboBox *m_comboMapMode = nullptr;
     QCheckBox *m_chkSimplifiedPlant = nullptr;
-    QCheckBox *m_chkRoadsRivers = nullptr;
     QCheckBox *m_chkSourcesSinks = nullptr;
+    QCheckBox *m_chkRoadsRivers = nullptr;
     QCheckBox *m_chkTrackLabels = nullptr;
     QCheckBox *m_chkWagonLabels = nullptr;
     QCheckBox *m_chkExaggerateSize = nullptr;
-    QSlider *m_sliderSimSpeed = nullptr;
-    QLabel *m_lblSimSpeedVal = nullptr;
-
-    // Tab 4: Bahn-API (DB) & Test-Ortung
-    QLineEdit *m_editApiUrl = nullptr;
-    QLineEdit *m_editClientId = nullptr;
-    QLineEdit *m_editApiKey = nullptr;
-    QCheckBox *m_chkAutoPollApi = nullptr;
-    QPlainTextEdit *m_txtApiLog = nullptr;
-    QTimer *m_apiPollTimer = nullptr;
+    QCheckBox *m_chkSnapToTracks = nullptr;
 
     bool m_updatingUi = false;
-    int m_stepCounter = 0;
 };
 
 #endif // MAINWINDOWSHSLOGISTICS_H
